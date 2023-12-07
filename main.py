@@ -91,13 +91,16 @@ for index in range(demo_dataset.__len__()):
     gts = torch.concatenate([gts, gt_classes.view(-1, 1)], axis=1)
     gts = gts.view(1, -1, 8)
 
-    patches, deform_verts, pos_trans = init_adv_patch(gts[0], scale)
+    ### here actually not one patches for all but generate different patches for each bounding box
+    #patches, deform_verts, pos_trans = init_adv_patch(gts[0], scale)
+    patch, deform_vert, pos_trans = init_adv_patch_uni(gts[0], scale)
     
-    ori_points = attach_adv_patch_scene(
-        data_dict["points"][:, 1:4], patches, pos_trans, deform_verts, sample_amount=50)
-    ori_points = F.pad(ori_points, (1, 1), "constant", 0)
+    #ori_points = attach_adv_patch_scene_uni(
+    #    data_dict["points"][:, 1:4], patch, pos_trans, deform_vert, sample_amount=50)
+    #ori_points = F.pad(ori_points, (1, 1), "constant", 0) # why don't understand
 
-    patch_attack(model, data_dict["points"], gts, patches, deform_verts, pos_trans, epses[0], data_dict)
+    deform_adv = patch_obj_attack(model, data_dict["points"], gts, patch, deform_vert, pos_trans, epses[0], data_dict, 20)
+    #patch_attack(model, data_dict["points"], gts, patch, deform_vert, pos_trans, epses[0], data_dict)
     
     new_points = attach_adv_patch_scene(data_dict["points"][:, 1:4], patches, pos_trans, deform_verts, sample_amount=50)
     new_points = F.pad(new_points, (1, 1), "constant", 0)
@@ -131,37 +134,3 @@ for index in range(demo_dataset.__len__()):
 
     if not OPEN3D_FLAG:
         mlab.show(stop=True)
-        
-        data_dict = demo_dataset[0]
-data_dict = demo_dataset.collate_batch([data_dict])
-load_data_to_gpu(data_dict)
-
-pred_dicts = predict(model, data_dict["points"], data_dict)
-
-V.draw_scenes(
-    points=data_dict['points'][:, 1:], ref_boxes=pred_dicts[0]['pred_boxes'],
-    ref_scores=pred_dicts[0]['pred_scores'], ref_labels=pred_dicts[0]['pred_labels'], gt_boxes=pred_dicts[0]['pred_boxes']
-)
-
-gts = pred_dicts[0]['pred_boxes']
-gt_classes = torch.ones(gts.size(0)).cuda()
-gts = torch.concatenate([gts, gt_classes.view(-1, 1)], axis=1)
-gts = gts.view(1, -1, 8)
-
-for eps in epses:
-
-    adv_points = attack(model, data_dict["points"], gts, eps, data_dict)
-    pred_dicts = predict(model, adv_points, data_dict)
-    
-    with torch.no_grad():
-        l2_loss = (adv_points[:, 1:4] - data_dict["points"][:, 1:4]).pow(2).sum()
-        print(f"eps={eps}, l2 loss={l2_loss.item()}")
-
-
-    V.draw_scenes(
-        points=adv_points[:, 1:], ref_boxes=pred_dicts[0]['pred_boxes'],
-        ref_scores=pred_dicts[0]['pred_scores'], ref_labels=pred_dicts[0]['pred_labels'], gt_boxes=gts[0][:, :7]
-    )
-
-if not OPEN3D_FLAG:
-    mlab.show(stop=True)
