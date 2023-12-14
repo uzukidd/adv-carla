@@ -28,6 +28,7 @@ from pcdet.config import cfg, cfg_from_yaml_file
 from pcdet.datasets import DatasetTemplate
 from pcdet.models import build_network, load_data_to_gpu
 from pcdet.utils import common_utils
+from pcdet.utils import loss_utils
 
 import pdb
 
@@ -249,10 +250,13 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
     data_dict["batch_size"] = data_template["batch_size"]
     
 
+    model.eval()
     deform_vert = torch.full(deform_ori.shape, 0.000001, device='cuda', requires_grad=True)
     opt = optim.Adam([deform_vert], lr=1e-2, weight_decay=0.)
-    model.train()
 
+    ClassificationLoss = loss_utils.SigmoidFocalClassificationLoss()
+
+    best_vert = deform_vert.copy()
     for iteration in range(max_iter):
         opt.zero_grad()
 
@@ -261,8 +265,20 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
         data_dict["points"] = new_points
 
         model.zero_grad()
-        ret_dict, tb_dict, _ = model.forward(data_dict)
-        ret_dict["loss"].backward()
+        pdb.set_trace()
+        ret_dict, tb_dict = model.forward(data_dict)
+        ### need to modify https://github.com/open-mmlab/OpenPCDet/blob/master/pcdet/models/detectors/detector3d_template.py#L278 adding pred_logits to record_dict
+        loss_cla = ClassificationLoss(ret_dict['pred_logits'], label?, weights?)
+        loss_det = loss_utils.get_corner_loss_lidar(ret_dict['pred_boxes'], gt_boxes)
+        #ret_dict["loss"].backward()
+        loss = loss_cla + loss_det
+
+        ### save best
+        if ret_dict['pred_labels']!=labels:
+            best_vert = deform_vert.copy()
+
+        loss.backward()
         opt.step()
+
     return deform_vert
 
