@@ -102,7 +102,7 @@ for index in range(demo_dataset.__len__()):
     deform_adv = patch_obj_attack(model, data_dict["points"], gts, patch, deform_vert, pos_trans, epses[0], data_dict, 20)
     #patch_attack(model, data_dict["points"], gts, patch, deform_vert, pos_trans, epses[0], data_dict)
     
-    new_points = attach_adv_patch_scene(data_dict["points"][:, 1:4], patches, pos_trans, deform_verts, sample_amount=50)
+    new_points = attach_adv_patch_scene_uni(data_dict["points"][:, 1:4], patch, pos_trans, deform_adv, sample_amount=50)
     new_points = F.pad(new_points, (1, 1), "constant", 0)
     
     pred_dicts = predict(model, new_points, data_dict)
@@ -113,7 +113,6 @@ for index in range(demo_dataset.__len__()):
         print(f"eps={epses[0]}, l2 loss={l2_loss.item()}")
     
     print(f"length of patch : {patches.__len__()}")
-    pdb.set_trace()
     
     fig = plot_scene({
         "original": {

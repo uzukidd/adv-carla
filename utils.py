@@ -241,14 +241,6 @@ def patch_attack(model, points, gt_boxes, patches, deform_verts, pos_trans, eps,
 
 
 def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps, data_template, max_iter):
-    data_dict = {
-        
-    }
-    data_dict["gt_boxes"] = gt_boxes
-    data_dict["frame_id"] = data_template["frame_id"]
-    data_dict["use_lead_xyz"] = data_template["use_lead_xyz"].clone().detach()
-    data_dict["batch_size"] = data_template["batch_size"]
-    
 
     model.eval()
     deform_vert = torch.full(deform_ori.shape, 0.000001, device='cuda', requires_grad=True)
@@ -256,29 +248,40 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
 
     ClassificationLoss = loss_utils.SigmoidFocalClassificationLoss()
 
-    best_vert = deform_vert.copy()
+    best_vert = deform_vert.clone()
+    best_loss = 9999999
     for iteration in range(max_iter):
         opt.zero_grad()
+        data_dict = {
+            
+        }
+        data_dict["gt_boxes"] = gt_boxes
+        data_dict["frame_id"] = data_template["frame_id"]
+        data_dict["use_lead_xyz"] = data_template["use_lead_xyz"].clone().detach()
+        data_dict["batch_size"] = data_template["batch_size"]
 
         new_points = attach_adv_patch_scene_uni(points[:, 1:4], patch, pos_trans, deform_vert, sample_amount=50)
         new_points = F.pad(new_points, (1,1), "constant", 0)
         data_dict["points"] = new_points
 
         model.zero_grad()
-        pdb.set_trace()
         ret_dict, tb_dict = model.forward(data_dict)
-        ### need to modify https://github.com/open-mmlab/OpenPCDet/blob/master/pcdet/models/detectors/detector3d_template.py#L278 adding pred_logits to record_dict
-        loss_cla = ClassificationLoss(ret_dict['pred_logits'], label?, weights?)
-        loss_det = loss_utils.get_corner_loss_lidar(ret_dict['pred_boxes'], gt_boxes)
-        #ret_dict["loss"].backward()
-        loss = loss_cla + loss_det
-
-        ### save best
-        if ret_dict['pred_labels']!=labels:
-            best_vert = deform_vert.copy()
-
+        print(ret_dict[0]['pred_labels'].shape)
+        if iteration >9:
+            pdb.set_trace()
+        loss_cla = ClassificationLoss(ret_dict[0]['pred_labels'],gt_boxes[0,:,-1],ret_dict[0]['pred_scores'])
+        loss_det = loss_utils.get_corner_loss_lidar(ret_dict[0]['pred_boxes'], gt_boxes[0,:,:-1])
+        #
+        loss = loss_cla.sum() + loss_det.sum()
+        pdb.set_trace()
         loss.backward()
         opt.step()
 
-    return deform_vert
+
+        ### save best
+        if loss < best_loss:
+            best_vert = deform_vert.clone()
+            best_loss = loss
+
+    return best_vert
 
