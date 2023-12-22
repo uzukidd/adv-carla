@@ -15,6 +15,8 @@ import glob
 from pathlib import Path
 import easydict
 
+from scipy.spatial.transform import Rotation as R
+
 try:
     import open3d
     from visual_utils import open3d_vis_utils as V
@@ -31,6 +33,42 @@ from pcdet.utils import common_utils
 from pcdet.utils import loss_utils
 
 import pdb
+
+### TODO: Modify functions
+
+def euler_to_rotation_matrix(yaw, pitch, roll):
+    # 转换为弧度
+    yaw_rad, pitch_rad, roll_rad = np.radians(yaw), np.radians(pitch), np.radians(roll)
+
+    # 创建旋转矩阵
+    rotation_matrix = np.eye(3)
+
+    cos_yaw, sin_yaw = np.cos(yaw_rad), np.sin(yaw_rad)
+    cos_pitch, sin_pitch = np.cos(pitch_rad), np.sin(pitch_rad)
+    cos_roll, sin_roll = np.cos(roll_rad), np.sin(roll_rad)
+
+    rotation_matrix[0, 0] = cos_yaw * cos_pitch
+    rotation_matrix[0, 1] = cos_yaw * sin_pitch * sin_roll - sin_yaw * cos_roll
+    rotation_matrix[0, 2] = cos_yaw * sin_pitch * cos_roll + sin_yaw * sin_roll
+
+    rotation_matrix[1, 0] = sin_yaw * cos_pitch
+    rotation_matrix[1, 1] = sin_yaw * sin_pitch * sin_roll + cos_yaw * cos_roll
+    rotation_matrix[1, 2] = sin_yaw * sin_pitch * cos_roll - cos_yaw * sin_roll
+
+    rotation_matrix[2, 0] = -sin_pitch
+    rotation_matrix[2, 1] = cos_pitch * sin_roll
+    rotation_matrix[2, 2] = cos_pitch * cos_roll
+
+    return rotation_matrix
+
+def rotation_matrix_to_euler_angles(rotation_matrix):
+    # 使用NumPy的RotationMatrix类来获取欧拉角
+    r = R.from_matrix(rotation_matrix)
+    # 使用as_euler函数获取欧拉角
+    euler_angles = r.as_euler('zyx', degrees=True)
+    return euler_angles[0], euler_angles[1], euler_angles[2]
+
+### TODO: End
 
 
 class DemoDataset(DatasetTemplate):
@@ -109,8 +147,13 @@ def plot_pointcloud(mesh, title=""):
     ax.set_title(title)
     ax.view_init(190, 30)
     plt.show()
-    
+
 def generate_mono_adv_patch(scale, level: int=0):
+    """
+    Input: Scale proportion
+    Return: A sphere
+    """
+    ### NOTE: What is mono?
     mSphere = ico_sphere(level)
     new_verts = scale.transform_points(mSphere.verts_padded())
     mSphere = mSphere.update_padded(new_verts) 
@@ -242,7 +285,6 @@ def patch_attack(model, points, gt_boxes, patches, deform_verts, pos_trans, eps,
 
 def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps, data_template, max_iter):
 
-    model.eval()
     deform_vert = torch.full(deform_ori.shape, 0.000001, device='cuda', requires_grad=True)
     opt = optim.Adam([deform_vert], lr=1e-2, weight_decay=0.)
 
@@ -264,17 +306,28 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
         new_points = F.pad(new_points, (1,1), "constant", 0)
         data_dict["points"] = new_points
 
+        ### training loss
+        model.train() # set loss easily but have potential problem
         model.zero_grad()
-        ret_dict, tb_dict = model.forward(data_dict)
-        print(ret_dict[0]['pred_labels'].shape)
-        if iteration >9:
-            pdb.set_trace()
-        loss_cla = ClassificationLoss(ret_dict[0]['pred_labels'],gt_boxes[0,:,-1],ret_dict[0]['pred_scores'])
-        loss_det = loss_utils.get_corner_loss_lidar(ret_dict[0]['pred_boxes'], gt_boxes[0,:,:-1])
-        #
-        loss = loss_cla.sum() + loss_det.sum()
-        pdb.set_trace()
-        loss.backward()
+        ret_dict, tb_dict, _ = model.forward(data_dict)
+        
+        print(ret_dict["loss"])
+        loss = ret_dict["loss"]
+        ret_dict["loss"].backward()
+
+        ### testing loss
+        #model.eval()
+        #model.zero_grad()
+        #ret_dict, tb_dict = model.forward(data_dict)
+        #print(ret_dict[0]['pred_labels'].shape)
+        #if iteration >9:
+        #    pdb.set_trace()
+        #loss_cla = ClassificationLoss(ret_dict[0]['pred_labels'],gt_boxes[0,:,-1],ret_dict[0]['pred_scores'])
+        #loss_det = loss_utils.get_corner_loss_lidar(ret_dict[0]['pred_boxes'], gt_boxes[0,:,:-1])
+        ##
+        #loss = loss_cla.sum() + loss_det.sum()
+        #loss.backward()
+        #pdb.set_trace()
         opt.step()
 
 
