@@ -342,60 +342,60 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
         cls_loss_src = ClassificationLoss(point_cls_preds, one_hot_targets, weights=cls_weights)
         point_loss_cls = cls_loss_src.sum()
 
-        ### roi_head.get_loss
-        forward_ret_dict = model.module_list[2].assign_targets(data_dict)
-        code_size = model.module_list[2].box_coder.code_size
-        rcnn_cls_labels = forward_ret_dict['rcnn_cls_labels']
-        reg_valid_mask = forward_ret_dict['reg_valid_mask'].view(-1)
-        gt_boxes3d_ct = forward_ret_dict['gt_of_rois'][..., 0:code_size]
-        roi_boxes3d = forward_ret_dict['rois']
-        gt_of_rois_src = forward_ret_dict['gt_of_rois_src'][..., 0:code_size].view(-1, code_size)
+        #### roi_head.get_loss
+        #forward_ret_dict = model.module_list[2].assign_targets(data_dict)
+        #code_size = model.module_list[2].box_coder.code_size
+        #rcnn_cls_labels = forward_ret_dict['rcnn_cls_labels']
+        #reg_valid_mask = forward_ret_dict['reg_valid_mask'].view(-1)
+        #gt_boxes3d_ct = forward_ret_dict['gt_of_rois'][..., 0:code_size]
+        #roi_boxes3d = forward_ret_dict['rois']
+        #gt_of_rois_src = forward_ret_dict['gt_of_rois_src'][..., 0:code_size].view(-1, code_size)
 
-        #### change OpenPCD/pcdet/models/roi_heads/pointrcnn_head.py adding rcnn_reg rcnn_cls to dict
-        #rcnn_reg = data_dict['rcnn_cls'] 
-        #rcnn_cls = data_dict['rcnn_reg']
-        rcnn_reg = data_dict['batch_cls_preds'] 
-        rcnn_cls = data_dict['batch_box_preds']
+        ##### change OpenPCD/pcdet/models/roi_heads/pointrcnn_head.py adding rcnn_reg rcnn_cls to dict
+        ##rcnn_reg = data_dict['rcnn_cls'] 
+        ##rcnn_cls = data_dict['rcnn_reg']
+        #rcnn_reg = data_dict['batch_cls_preds'] 
+        #rcnn_cls = data_dict['batch_box_preds']
 
-        rcnn_batch_size = gt_boxes3d_ct.view(-1, code_size).shape[0]
-        fg_mask = (reg_valid_mask > 0)
-        fg_sum = fg_mask.long().sum().item()
-        ### get_box_cls_layer_loss
-        pdb.set_trace()
-        #batch_loss_cls = F.cross_entropy(rcnn_cls, rcnn_cls_labels, reduction='none', ignore_index=-1)
-        #cls_valid_mask = (rcnn_cls_labels >= 0).float()
-        #rcnn_loss_cls = (batch_loss_cls * cls_valid_mask).sum() / torch.clamp(cls_valid_mask.sum(), min=1.0)
-        ### get_box+reg_layer_loss
-        #loss_cfgs = model.module_list[2].model_cfg.LOSS_CONFIG
-        #WeightedSmoothL1Loss = loss_utils.WeightedSmoothL1Loss(code_weights = loss_cfgs['code_weights'])
-        #rois_anchor = roi_boxes3d.clone().detach().view(-1, code_size)
-        #rois_anchor[:, 0:3] = 0
-        #rois_anchor[:, 6] = 0
-        #reg_targets = model.module_list[2].box_coder.encode_torch(gt_boxes3d_ct.view(rcnn_batch_size, code_size), rois_anchor)
-        #rcnn_loss_reg = model.module_list[2].reg_loss_func(rcnn_reg.view(rcnn_batch_size, -1).unsqueeze(dim=0),reg_targets.unsqueeze(dim=0),)
-        #rcnn_loss_reg = (rcnn_loss_reg.view(rcnn_batch_size, -1) * fg_mask.unsqueeze(dim=-1).float()).sum() / max(fg_sum, 1)
-        #rcnn_loss_reg = rcnn_loss_reg * loss_cfgs['rcnn_reg_weight']
-        #rcnn_loss_reg = rcnn_loss_reg.item()
+        #rcnn_batch_size = gt_boxes3d_ct.view(-1, code_size).shape[0]
+        #fg_mask = (reg_valid_mask > 0)
+        #fg_sum = fg_mask.long().sum().item()
+        #### get_box_cls_layer_loss
+        #pdb.set_trace()
+        ##batch_loss_cls = F.cross_entropy(rcnn_cls, rcnn_cls_labels, reduction='none', ignore_index=-1)
+        ##cls_valid_mask = (rcnn_cls_labels >= 0).float()
+        ##rcnn_loss_cls = (batch_loss_cls * cls_valid_mask).sum() / torch.clamp(cls_valid_mask.sum(), min=1.0)
+        #### get_box+reg_layer_loss
+        ##loss_cfgs = model.module_list[2].model_cfg.LOSS_CONFIG
+        ##WeightedSmoothL1Loss = loss_utils.WeightedSmoothL1Loss(code_weights = loss_cfgs['code_weights'])
+        ##rois_anchor = roi_boxes3d.clone().detach().view(-1, code_size)
+        ##rois_anchor[:, 0:3] = 0
+        ##rois_anchor[:, 6] = 0
+        ##reg_targets = model.module_list[2].box_coder.encode_torch(gt_boxes3d_ct.view(rcnn_batch_size, code_size), rois_anchor)
+        ##rcnn_loss_reg = model.module_list[2].reg_loss_func(rcnn_reg.view(rcnn_batch_size, -1).unsqueeze(dim=0),reg_targets.unsqueeze(dim=0),)
+        ##rcnn_loss_reg = (rcnn_loss_reg.view(rcnn_batch_size, -1) * fg_mask.unsqueeze(dim=-1).float()).sum() / max(fg_sum, 1)
+        ##rcnn_loss_reg = rcnn_loss_reg * loss_cfgs['rcnn_reg_weight']
+        ##rcnn_loss_reg = rcnn_loss_reg.item()
 
 
 
-        print(ret_dict[0]['pred_labels'].shape)
-        if iteration >9:
-            pdb.set_trace()
+        #print(ret_dict[0]['pred_labels'].shape)
+        #if iteration >9:
+        #    pdb.set_trace()
         #deform_vert.retain_grad()
         #loss_cla = ClassificationLoss(ret_dict[0]['pred_labels'],gt_boxes[0,:,-1],ret_dict[0]['pred_scores'])
-        loss_det = loss_utils.get_corner_loss_lidar(ret_dict[0]['pred_boxes'], gt_boxes[0,:,:-1])
+        #loss_det = loss_utils.get_corner_loss_lidar(ret_dict[0]['pred_boxes'], gt_boxes[0,:,:-1])
         #
-        loss = loss_cla.sum() + loss_det.sum()
-        loss.backward()
-        pdb.set_trace()
+        #loss = loss_cla.sum() + loss_det.sum()
+        #loss.backward()
+        point_loss_cls.backward()
         opt.step()
 
 
         ### save best
-        if loss < best_loss:
+        if point_loss_cls < best_loss:
             best_vert = deform_vert.clone()
-            best_loss = loss
+            best_loss = point_loss_cls
 
     return best_vert
 
