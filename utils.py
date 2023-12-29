@@ -153,7 +153,7 @@ def generate_mono_adv_patch(scale, level: int=0):
     Input: Scale proportion
     Return: A sphere
     """
-    ### NOTE: What is mono?
+    ###
     mSphere = ico_sphere(level)
     new_verts = scale.transform_points(mSphere.verts_padded())
     mSphere = mSphere.update_padded(new_verts) 
@@ -180,8 +180,11 @@ def init_adv_patch(gt_boxes, scale):
 def init_adv_patch_uni(gt_boxes, scale):
     n = gt_boxes.size(0)
     patch = generate_mono_adv_patch(scale).cuda()
+    
     deform_vert = torch.full(patch.verts_packed().shape, 0.0).cuda().contiguous()
     deform_vert.requires_grad_()
+    
+    # https://pytorch3d.readthedocs.io/en/latest/modules/structures.html#pytorch3d.structures.Meshes.verts_packed
     bottom = patch.verts_packed()[:, 2].min()
 
     pos_trans = []
@@ -288,7 +291,7 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
     deform_vert = torch.full(deform_ori.shape, 0.000001, device='cuda', requires_grad=True)
     opt = optim.Adam([deform_vert], lr=1e-2, weight_decay=0.)
 
-    ClassificationLoss = loss_utils.SigmoidFocalClassificationLoss()
+    ClassificationLoss = loss_utils.SigmoidFocalClassificationLoss(alpha=0.25, gamma=2.0)
 
     best_vert = deform_vert.clone()
     best_loss = 9999999
@@ -306,28 +309,68 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
         new_points = F.pad(new_points, (1,1), "constant", 0)
         data_dict["points"] = new_points
 
-        ### training loss
-        model.train() # set loss easily but have potential problem
-        model.zero_grad()
-        ret_dict, tb_dict, _ = model.forward(data_dict)
-        
-        print(ret_dict["loss"])
-        loss = ret_dict["loss"]
-        ret_dict["loss"].backward()
-
-        ### testing loss
-        #model.eval()
+        #### training loss
+        #model.train() # set loss easily but have potential problem
         #model.zero_grad()
-        #ret_dict, tb_dict = model.forward(data_dict)
-        #print(ret_dict[0]['pred_labels'].shape)
-        #if iteration >9:
-        #    pdb.set_trace()
+        #ret_dict, tb_dict, _ = model.forward(data_dict)
+        #
+        #print(ret_dict["loss"])
+        #loss = ret_dict["loss"]
+        #ret_dict["loss"].backward()
+
+        ## testing loss
+        model.eval()
+        #model.zero_grad()
+        ret_dict, tb_dict = model.forward(data_dict)
+        ### point_head.get_loss
+        point_cls_preds = model.module_list[1].forward_ret_dict['point_cls_preds']
+        #point_box_preds = model.module_list[1].forward_ret_dict['point_box_preds']
+        algin_data = model.module_list[1].assign_targets(data_dict)
+        point_cls_labels = algin_data['point_cls_labels']
+        point_cls_labels = point_cls_labels.view(-1)
+        point_cls_preds = point_cls_preds.view(-1, model.module_list[1].num_class)
+
+        positives = (point_cls_labels > 0)
+        negative_cls_weights = (point_cls_labels == 0) * 1.0
+        cls_weights = (negative_cls_weights + 1.0 * positives).float()
+        pos_normalizer = positives.sum(dim=0).float()
+        cls_weights /= torch.clamp(pos_normalizer, min=1.0)
+
+        one_hot_targets = point_cls_preds.new_zeros(*list(point_cls_labels.shape), model.module_list[1].num_class + 1)
+        one_hot_targets.scatter_(-1, (point_cls_labels * (point_cls_labels >= 0).long()).unsqueeze(dim=-1).long(), 1.0)
+        one_hot_targets = one_hot_targets[..., 1:]
+        cls_loss_src = ClassificationLoss(point_cls_preds, one_hot_targets, weights=cls_weights)
+        point_loss_cls = cls_loss_src.sum()
+
+        pdb.set_trace()
+        ### roi_head.get_loss
+        forward_ret_dict = model.module_list[2].assign_targets(data_dict)
+        code_size = model.module_list[2].box_coder.code_size
+        rcnn_cls_labels = forward_ret_dict['rcnn_cls_labels']
+        reg_valid_mask = forward_ret_dict['reg_valid_mask'].view(-1)
+        gt_boxes3d_ct = forward_ret_dict['gt_of_rois'][..., 0:code_size]
+        roi_boxes3d = forward_ret_dict['rois']
+        gt_of_rois_src = forward_ret_dict['gt_of_rois_src'][..., 0:code_size].view(-1, code_size)
+
+        rcnn_reg = forward_ret_dict['rcnn_reg'] 
+        rcnn_cls = 
+
+        rcnn_batch_size = gt_boxes3d_ct.view(-1, code_size).shape[0]
+        fg_mask = (reg_valid_mask > 0)
+        fg_sum = fg_mask.long().sum().item()
+        ### get_box_cls_layer_loss
+        ### get_box+reg_layer_loss
+        print(ret_dict[0]['pred_labels'].shape)
+        if iteration >9:
+            pdb.set_trace()
+        #deform_vert.retain_grad()
         #loss_cla = ClassificationLoss(ret_dict[0]['pred_labels'],gt_boxes[0,:,-1],ret_dict[0]['pred_scores'])
-        #loss_det = loss_utils.get_corner_loss_lidar(ret_dict[0]['pred_boxes'], gt_boxes[0,:,:-1])
-        ##
-        #loss = loss_cla.sum() + loss_det.sum()
-        #loss.backward()
-        #pdb.set_trace()
+        pdb.set_trace()
+        loss_det = loss_utils.get_corner_loss_lidar(ret_dict[0]['pred_boxes'], gt_boxes[0,:,:-1])
+        #
+        loss = loss_cla.sum() + loss_det.sum()
+        loss.backward()
+        pdb.set_trace()
         opt.step()
 
 
