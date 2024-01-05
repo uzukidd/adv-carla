@@ -182,7 +182,7 @@ def rotate_patch(patch, heading):
 def rotate_deform_vert(deform_vert, heading):
     # Assuming deform_vert contains vertex offsets in the local coordinate system
     # Rotate the deform_vert based on the heading (in radians) around z-axis
-    rotated_deform_vert = deform_vert.clone()  # You might need to implement the rotation logic
+    rotated_deform_vert = deform_vert.clone()  # need to implement the rotation logic
     return rotated_deform_vert
 
 def translate_patch(patch, translation):
