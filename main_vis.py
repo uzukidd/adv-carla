@@ -289,17 +289,17 @@ def main():
         
         print(f"length of patch : {patches.__len__()}")
         
-        fig = plot_scene({
-            "original": {
-                "mesh_1": patches[0]
-            },
-            "adversarial": {
-                "mesh_1": patches[0].offset_verts(deform_verts[0])
-            },
+        # fig = plot_scene({
+        #     "original": {
+        #         "mesh_1": patches[0]
+        #     },
+        #     "adversarial": {
+        #         "mesh_1": patches[0].offset_verts(deform_verts[0])
+        #     },
             
-        })
-        fig.update_layout(height=1000, width=500)
-        fig.show()
+        # })
+        # fig.update_layout(height=1000, width=500)
+        # fig.show()
 
         V.draw_scenes(
             points=new_points.detach()[:, 1:], ref_boxes=pred_dicts[0]['pred_boxes'],

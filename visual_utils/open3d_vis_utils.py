@@ -4,6 +4,8 @@ Written by Jihan YANG
 All rights preserved from 2021 - present.
 """
 import open3d
+from open3d.web_visualizer import draw
+
 import torch
 import matplotlib
 import numpy as np
@@ -33,6 +35,35 @@ def get_coor_colors(obj_labels):
     label_rgba = label_rgba.squeeze()[:, :3]
 
     return label_rgba
+
+def draw_scenes_inline(points, gt_boxes=None, ref_boxes=None, ref_labels=None, ref_scores=None, point_colors=None, draw_origin=True):
+    if isinstance(points, torch.Tensor):
+        points = points.cpu().numpy()
+    if isinstance(gt_boxes, torch.Tensor):
+        gt_boxes = gt_boxes.cpu().numpy()
+    if isinstance(ref_boxes, torch.Tensor):
+        ref_boxes = ref_boxes.cpu().numpy()
+
+    # vis = open3d.visualization.Visualizer()
+    # vis.create_window()
+
+    # vis.get_render_option().point_size = 1.0
+    # vis.get_render_option().background_color = np.zeros(3)
+
+    # draw origin
+    if draw_origin:
+        axis_pcd = open3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
+        # open3d.visualization.draw_plotly([axis_pcd])
+
+    pts = open3d.geometry.PointCloud()
+    pts.points = open3d.utility.Vector3dVector(points[:, :3])
+
+    # vis.add_geometry(pts)
+    draw(pts)
+    if point_colors is None:
+        pts.colors = open3d.utility.Vector3dVector(np.ones((points.shape[0], 3)))
+    else:
+        pts.colors = open3d.utility.Vector3dVector(point_colors)
 
 
 def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_labels=None, ref_scores=None, point_colors=None, draw_origin=True):
