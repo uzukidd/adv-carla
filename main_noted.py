@@ -102,16 +102,14 @@ for index in range(demo_dataset.__len__()):
     print(gts)
     # batch_size, num_bbox, gts_dimenstion (bbox + category)
     gts = gts.view(1, -1, 8)
-    print(gts)
 
-    ### TODO: Add transform matrix calculation fuction
-    # https://drake.mit.edu/doxygen_cxx/group__multibody__spatial__pose.html
-    # adjacent_frame_transform_matrix = euler_to_rotation_matrix()
-    # roll pitch yaw
 
     ### NOTE: here actually not one patches for all but generate different patches for each bounding box
     #patches, deform_verts, pos_trans = init_adv_patch(gts[0], scale)
     patch, deform_vert, pos_trans = init_adv_patch_uni(gts[0], scale)
+
+    ### TODO:
+    patch, deform_adv, pos_trans = align_heading_for_adv_patch_uni(gts[0], patch)
     
     ori_points = attach_adv_patch_scene_uni(
        data_dict["points"][:, 1:4], patch, pos_trans, deform_vert, sample_amount=50)

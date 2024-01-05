@@ -149,11 +149,6 @@ def plot_pointcloud(mesh, title=""):
     plt.show()
 
 def generate_mono_adv_patch(scale, level: int=0):
-    """
-    Input: Scale proportion
-    Return: A sphere
-    """
-    ###
     mSphere = ico_sphere(level)
     new_verts = scale.transform_points(mSphere.verts_padded())
     mSphere = mSphere.update_padded(new_verts) 
@@ -184,7 +179,6 @@ def init_adv_patch_uni(gt_boxes, scale):
     deform_vert = torch.full(patch.verts_packed().shape, 0.0).cuda().contiguous()
     deform_vert.requires_grad_()
     
-    # https://pytorch3d.readthedocs.io/en/latest/modules/structures.html#pytorch3d.structures.Meshes.verts_packed
     bottom = patch.verts_packed()[:, 2].min()
 
     pos_trans = []
@@ -193,6 +187,11 @@ def init_adv_patch_uni(gt_boxes, scale):
         pos_trans.append(pos)
     return patch, deform_vert, pos_trans
         
+def align_heading_for_adv_patch_uni(gt_boxes, init_patch):
+    ...
+
+
+
 def attach_adv_patch_scene(points, patches, pos_trans, deform_verts, sample_amount = 50):
     n = patches.__len__()
     pts_set = [points]
