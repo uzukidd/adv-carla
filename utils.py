@@ -34,41 +34,6 @@ from pcdet.utils import loss_utils
 
 import pdb
 
-### TODO: Modify functions
-
-def euler_to_rotation_matrix(yaw, pitch, roll):
-    # 转换为弧度
-    yaw_rad, pitch_rad, roll_rad = np.radians(yaw), np.radians(pitch), np.radians(roll)
-
-    # 创建旋转矩阵
-    rotation_matrix = np.eye(3)
-
-    cos_yaw, sin_yaw = np.cos(yaw_rad), np.sin(yaw_rad)
-    cos_pitch, sin_pitch = np.cos(pitch_rad), np.sin(pitch_rad)
-    cos_roll, sin_roll = np.cos(roll_rad), np.sin(roll_rad)
-
-    rotation_matrix[0, 0] = cos_yaw * cos_pitch
-    rotation_matrix[0, 1] = cos_yaw * sin_pitch * sin_roll - sin_yaw * cos_roll
-    rotation_matrix[0, 2] = cos_yaw * sin_pitch * cos_roll + sin_yaw * sin_roll
-
-    rotation_matrix[1, 0] = sin_yaw * cos_pitch
-    rotation_matrix[1, 1] = sin_yaw * sin_pitch * sin_roll + cos_yaw * cos_roll
-    rotation_matrix[1, 2] = sin_yaw * sin_pitch * cos_roll - cos_yaw * sin_roll
-
-    rotation_matrix[2, 0] = -sin_pitch
-    rotation_matrix[2, 1] = cos_pitch * sin_roll
-    rotation_matrix[2, 2] = cos_pitch * cos_roll
-
-    return rotation_matrix
-
-def rotation_matrix_to_euler_angles(rotation_matrix):
-    # 使用NumPy的RotationMatrix类来获取欧拉角
-    r = R.from_matrix(rotation_matrix)
-    # 使用as_euler函数获取欧拉角
-    euler_angles = r.as_euler('zyx', degrees=True)
-    return euler_angles[0], euler_angles[1], euler_angles[2]
-
-### TODO: End
 
 
 class DemoDataset(DatasetTemplate):
