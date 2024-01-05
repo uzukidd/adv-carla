@@ -186,11 +186,46 @@ def init_adv_patch_uni(gt_boxes, scale):
         pos = torch.tensor([gt_boxes[i][0], gt_boxes[i][1], gt_boxes[i][2] + gt_boxes[i][5] / 2 - bottom]).cuda()
         pos_trans.append(pos)
     return patch, deform_vert, pos_trans
-        
+
+### TODO: Test Align for each adv patch
+
 def align_heading_for_adv_patch_uni(gt_boxes, init_patch):
-    ...
+    # Extract heading from gt_boxes
+    heading = gt_boxes['pred_boxes'][:, 6].unsqueeze(1)  # Extract heading from gt_boxes
 
+    # Get the rotation matrix
+    rotation_matrix = get_rotation_matrix(heading)
 
+    # Apply the rotation to the patch vertices
+    rotated_patch_verts = rotate_patch(init_patch, rotation_matrix)
+
+    # Update the patch with the rotated vertices
+    init_patch = init_patch.update_padded(rotated_patch_verts)
+
+    return init_patch
+
+def get_rotation_matrix(heading):
+    # Convert heading from radians to degrees
+    heading_degrees = heading * (180.0 / 3.14159265358979323846)
+
+    # Create a 3x3 rotation matrix for each heading
+    rotation_matrix = F.rotate(torch.eye(3), heading_degrees, dim=0)
+
+    return rotation_matrix
+
+def rotate_patch(patch, rotation_matrix):
+    # Extract patch vertices
+    verts = patch.verts_packed()
+
+    # Rotate the patch vertices using the rotation matrix
+    rotated_verts = torch.matmul(verts[:, :3], rotation_matrix.t())
+
+    # Combine rotated vertices with original color and alpha
+    rotated_patch_verts = torch.cat([rotated_verts, verts[:, 3:]], dim=1)
+
+    return rotated_patch_verts
+
+### TODO: Test End
 
 def attach_adv_patch_scene(points, patches, pos_trans, deform_verts, sample_amount = 50):
     n = patches.__len__()

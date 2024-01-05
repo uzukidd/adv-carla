@@ -108,8 +108,8 @@ for index in range(demo_dataset.__len__()):
     #patches, deform_verts, pos_trans = init_adv_patch(gts[0], scale)
     patch, deform_vert, pos_trans = init_adv_patch_uni(gts[0], scale)
 
-    ### TODO:
-    patch, deform_adv, pos_trans = align_heading_for_adv_patch_uni(gts[0], patch)
+    ### TODO: Test Align
+    patch_  = align_heading_for_adv_patch_uni(gts[0], patch)
     
     ori_points = attach_adv_patch_scene_uni(
        data_dict["points"][:, 1:4], patch, pos_trans, deform_vert, sample_amount=50)
