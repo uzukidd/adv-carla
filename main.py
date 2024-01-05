@@ -84,37 +84,21 @@ for index in range(demo_dataset.__len__()):
     data_dict = demo_dataset.collate_batch([data_dict])
     load_data_to_gpu(data_dict)
 
-    ### NOTE: chw, pred_dicts['label'] = 1, car==1?
-    # https://github.com/open-mmlab/mmdetection3d/blob/main/mmdet3d/configs/_base_/datasets/kitti_3d_3class.py
-    # https://github.com/zhulf0804/PointPillars/blob/main/dataset/kitti.py
-    print(data_dict['points']) # [ 0.0000,  2.5808,  8.1727, -1.6950,  0.0000], 0xyz0 (pcdet预处理)
-    print(data_dict['points'].shape) # torch.Size([16384, 5]), what are the attributes it includes?
     pred_dicts = predict(model, data_dict["points"], data_dict)
 
-    ### Cat bbox (dim=7) and category (dim=1), gts dimension: Unified 3D box definition: (x, y, z, dx, dy, dz, heading).
-    # https://github.com/chenhengwei1999/OpenPCDet_Developing/blob/master/README_official.md
     gts = pred_dicts[0]['pred_boxes']
-    ### NOTE: category = 1?
     gt_classes = torch.ones(gts.size(0)).cuda()
-    print(gts)
-    print(gt_classes)
     gts = torch.concatenate([gts, gt_classes.view(-1, 1)], axis=1)
-    print(gts)
-    # batch_size, num_bbox, gts_dimenstion (bbox + category)
     gts = gts.view(1, -1, 8)
-    print(gts)
 
-    ### TODO: Add transform matrix calculation fuction
-    # adjacent_frame_transform_matrix = euler_to_rotation_matrix()
-    # roll pitch yaw
 
     ### NOTE: here actually not one patches for all but generate different patches for each bounding box
     #patches, deform_verts, pos_trans = init_adv_patch(gts[0], scale)
     patch, deform_vert, pos_trans = init_adv_patch_uni(gts[0], scale)
     
-    #ori_points = attach_adv_patch_scene_uni(
-    #    data_dict["points"][:, 1:4], patch, pos_trans, deform_vert, sample_amount=50)
-    #ori_points = F.pad(ori_points, (1, 1), "constant", 0) # why don't understand
+    ori_points = attach_adv_patch_scene_uni(
+       data_dict["points"][:, 1:4], patch, pos_trans, deform_vert, sample_amount=50)
+    ori_points = F.pad(ori_points, (1, 1), "constant", 0) # why don't understand
 
     deform_adv = patch_obj_attack(model, data_dict["points"], gts, patch, deform_vert, pos_trans, epses[0], data_dict, 20)
     #patch_attack(model, data_dict["points"], gts, patch, deform_vert, pos_trans, epses[0], data_dict)
@@ -129,14 +113,14 @@ for index in range(demo_dataset.__len__()):
                    ori_points[:, 1:4]).pow(2).sum()
         print(f"eps={epses[0]}, l2 loss={l2_loss.item()}")
     
-    print(f"length of patch : {patches.__len__()}")
+    # print(f"length of patch : {patches.__len__()}")
     
     fig = plot_scene({
         "original": {
-            "mesh_1": patches[0]
+            "mesh_1": patch
         },
         "adversarial": {
-            "mesh_1": patches[0].offset_verts(deform_verts[0])
+            "mesh_1": patch.offset_verts(deform_vert)
         },
         
     })
