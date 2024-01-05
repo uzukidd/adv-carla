@@ -154,41 +154,110 @@ def init_adv_patch_uni(gt_boxes, scale):
 
 ### TODO: Test Align for each adv patch
 
-def align_heading_for_adv_patch_uni(gt_boxes, init_patch):
-    # Extract heading from gt_boxes
-    heading = gt_boxes['pred_boxes'][:, 6].unsqueeze(1)  # Extract heading from gt_boxes
+def align_heading_for_adv_patch_uni(gt_boxes, patch, deform_vert, pos_trans):
+    n = gt_boxes.size(0)
+    aligned_patches = []
 
-    # Get the rotation matrix
-    rotation_matrix = get_rotation_matrix(heading)
+    for i in range(n):
+        # Extract heading from gt_boxes
+        heading = gt_boxes[i, 6]
 
-    # Apply the rotation to the patch vertices
-    rotated_patch_verts = rotate_patch(init_patch, rotation_matrix)
+        # Rotate the patch and deform_vert based on the heading
+        rotated_patch = rotate_patch(patch, heading)
+        rotated_deform_vert = rotate_deform_vert(deform_vert, heading)
 
-    # Update the patch with the rotated vertices
-    init_patch = init_patch.update_padded(rotated_patch_verts)
+        # Translate the rotated patch to the position of the gt_boxes
+        translated_patch = translate_patch(rotated_patch, pos_trans[i])
 
-    return init_patch
+        aligned_patches.append((translated_patch, rotated_deform_vert, pos_trans[i]))
 
-def get_rotation_matrix(heading):
-    # Convert heading from radians to degrees
-    heading_degrees = heading * (180.0 / 3.14159265358979323846)
+    return aligned_patches
 
-    # Create a 3x3 rotation matrix for each heading
-    rotation_matrix = F.rotate(torch.eye(3), heading_degrees, dim=0)
+def rotate_patch(patch, heading):
+    # Rotate the patch based on the heading (in radians) around z-axis
+    rotated_patch = patch.clone()
+    rotated_patch.verts_packed()[:, :3] = rotate_points(rotated_patch.verts_packed()[:, :3], heading)
+    return rotated_patch
 
-    return rotation_matrix
+def rotate_deform_vert(deform_vert, heading):
+    # Assuming deform_vert contains vertex offsets in the local coordinate system
+    # Rotate the deform_vert based on the heading (in radians) around z-axis
+    rotated_deform_vert = deform_vert.clone()  # You might need to implement the rotation logic
+    return rotated_deform_vert
 
-def rotate_patch(patch, rotation_matrix):
-    # Extract patch vertices
-    verts = patch.verts_packed()
+def translate_patch(patch, translation):
+    # Translate the patch to the specified position
+    translated_patch = patch.clone()
+    translated_patch.offset_verts_(translation)
+    return translated_patch
 
-    # Rotate the patch vertices using the rotation matrix
-    rotated_verts = torch.matmul(verts[:, :3], rotation_matrix.t())
+def rotate_points(points, angle):
+    # Rotate 3D points around the z-axis
+    cos_theta = torch.cos(angle)
+    sin_theta = torch.sin(angle)
 
-    # Combine rotated vertices with original color and alpha
-    rotated_patch_verts = torch.cat([rotated_verts, verts[:, 3:]], dim=1)
+    rotation_matrix = torch.tensor([
+        [cos_theta, -sin_theta, 0],
+        [sin_theta, cos_theta, 0],
+        [0, 0, 1]
+    ], dtype=points.dtype, device=points.device)
 
-    return rotated_patch_verts
+    rotated_points = torch.matmul(points, rotation_matrix)
+    return rotated_points
+
+# def align_heading_for_adv_patch_uni(gt_boxes, init_patch):
+#     # Extract heading from gt_boxes
+#     heading = gt_boxes[:, 6].unsqueeze(1)  # Extract heading from gt_boxes
+
+#     # Get the rotation matrix
+#     rotation_matrix = get_rotation_matrix(heading)
+
+#     # Apply the rotation to the patch vertices
+#     rotated_patch_verts = rotate_patch(init_patch, rotation_matrix)
+
+#     # Update the patch with the rotated vertices
+#     # Check if rotated_patch_verts has the same batch dimension as init_patch. If not, expand it.
+#     if rotated_patch_verts.shape[0] != init_patch.verts_packed().shape[0]:
+#         rotated_patch_verts = rotated_patch_verts.expand(init_patch.verts_packed().shape[0], -1, -1)
+
+#     init_patch = init_patch.update_padded(rotated_patch_verts)
+
+#     return init_patch
+
+# def get_rotation_matrix(heading):
+#     # Convert heading from radians to degrees
+#     heading_degrees = heading * (180.0 / 3.14159265358979323846)
+
+#     # Create a 2D rotation matrix for each heading
+#     rotation_matrix = torch.stack([torch.cos(heading_degrees), -torch.sin(heading_degrees),
+#                                    torch.sin(heading_degrees), torch.cos(heading_degrees)], dim=1)
+
+#     # Reshape to 2x2 matrix
+#     rotation_matrix = rotation_matrix.view(-1, 2, 2)
+
+#     # Pad to 3x3 matrix
+#     rotation_matrix = F.pad(rotation_matrix, (0, 1, 0, 1), "constant", 0)
+
+#     return rotation_matrix
+
+# def rotate_patch(patch, rotation_matrix):
+#     # Extract patch vertices
+#     verts = patch.verts_packed()
+
+#     # Get the original coordinates
+#     coords = verts[:, :3]
+
+#     # Apply the rotation to the coordinates using matrix multiplication
+#     rotated_coords = torch.matmul(coords, rotation_matrix.transpose(1, 2))
+
+#     # If verts[:, 3:] is not empty, combine rotated coordinates with original color and alpha
+#     if verts[:, 3:].numel() > 0:
+#         rotated_patch_verts = torch.cat([rotated_coords, verts[:, 3:].unsqueeze(2).expand(-1, -1, rotated_coords.size(2))], dim=1)
+#     else:
+#         # If verts[:, 3:] is empty, use rotated_coords alone
+#         rotated_patch_verts = rotated_coords.unsqueeze(1)
+
+#     return rotated_patch_verts
 
 ### TODO: Test End
 
