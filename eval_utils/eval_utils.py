@@ -20,10 +20,9 @@ def statistics_info(cfg, ret_dict, metric, disp_dict):
 
 
 def eval_one_epoch(cfg, args, model, dataloader, epoch_id, logger, dist_test=False, result_dir=None, infer_time=False):
-    result_dir.mkdir(parents=True, exist_ok=True)
-
-    final_output_dir = result_dir / 'final_result' / 'data'
     if result_dir is not None:
+        result_dir.mkdir(parents=True, exist_ok=True)
+        final_output_dir = result_dir / 'final_result' / 'data'
         final_output_dir.mkdir(parents=True, exist_ok=True)
 
     metric = {
