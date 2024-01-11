@@ -7,6 +7,12 @@ import glob
 
 from pathlib import Path
 
+from pytorch3d.ops import sample_points_from_meshes
+from pytorch3d.structures import Meshes, join_meshes_as_batch
+from pytorch3d.utils import ico_sphere
+from pytorch3d.transforms import Scale
+from pytorch3d.vis.plotly_vis import AxisArgs, plot_batch_individually, plot_scene
+
 try:
     import open3d
     from visual_utils import open3d_vis_utils as V
@@ -166,6 +172,83 @@ class kitti_carla_dataset(DatasetTemplate):
         
         return data_dict
     
+    
+class adversarial_patch_3d:
+    def __init__(self, basic_mesh):
+        self.basic_mesh = basic_mesh
+        self.deform_vert = torch.zeros_like(basic_mesh.verts_packed(), requires_grad=True).cuda().contiguous()
+        
+    def get_deformed_mesh(self):
+        return self.basic_mesh.offset_verts(self.deform_vert)
+    
+    def sample_points(self, sample_amount=50):
+        deformed_mesh = self.get_deformed_mesh()
+        pts_sampled = sample_points_from_meshes(deformed_mesh, sample_amount)
+        return pts_sampled
+    
+    
+class adv_dataset(DatasetTemplate):
+    def __init__(self, parent_dataset):
+        """
+        Args:
+            parent_dataset:
+        """
+        super().__init__(
+            dataset_cfg=parent_dataset.dataset_cfg, class_names=parent_dataset.class_names, training=parent_dataset.training, root_path=parent_dataset.root_path, logger=parent_dataset.logger
+        )
+        self.parent_dataset = parent_dataset
+        
+        if self.logger is not None:
+            self.logger.info('Total samples for dataset: %d' % (len(self)))
+            
+        self.universal_adv_patch = adversarial_patch_3d(basic_mesh=self.generate_basic_mesh())
+        
+
+    def __len__(self):
+        return len(self.parent_dataset)
+
+    def __getitem__(self, index):
+        batch_dict = self.parent_dataset.__getitem__(index)
+        batch_dict = kitti_carla_dataset.collate_batch([batch_dict])
+        load_data_to_gpu(batch_dict)
+        
+        batch_dict=self.prepare_adversarial_data(batch_dict)
+        
+        return batch_dict
+    
+    def prepare_adversarial_data(self, data_dict):
+        pos_trans = None
+        if data_dict.get('gt_boxes', None) is not None:
+            pos_trans = data_dict['gt_boxes'][0, :, 0:3]
+            data_dict["points"] = self.attach_adv_patch_scene(data_dict["points"][:, 1:4], 
+                                                         self.universal_adv_patch,
+                                                         pos_trans, None)
+            data_dict["points"] = F.pad(data_dict["points"], (1, 1), "constant", 0)
+        return data_dict
+    
+    @staticmethod
+    def generate_basic_mesh(level:int = 0):
+        mSphere = ico_sphere(level).cuda()
+        return mSphere
+    
+    @staticmethod
+    def attach_adv_patch_scene(points, adv_patch:adversarial_patch_3d, pos_trans, deform_vert, sample_amount = 50):
+        pts_set = [points]
+        
+        if pos_trans is None:
+            return torch.concatenate(pts_set)
+        
+        n = pos_trans.__len__()
+        
+        for i in range(n):
+            pts_set.append(pos_trans[i][None, :] + adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3))
+            
+        return torch.concatenate(pts_set)
+    
+    @staticmethod
+    def generate_adv_sample(batch_dict):
+        pass
+    
 if __name__ == "__main__":
     pass
     CFG_FILE = "./cfgs/kitti_models/pointrcnn.yaml"
@@ -176,8 +259,28 @@ if __name__ == "__main__":
     dataset = kitti_carla_dataset(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, training=False,
         root_path=Path(DATA_PATH), ext=".ply", logger=logger)
     
-    data_0 = dataset[0]
     
+    BATCH_SIZE = 1
+    WORKERS = 4
+    DIST_TEST = False
+    CFG_FILE = "./cfgs/kitti_models/pointrcnn.yaml"
+    cfg_from_yaml_file(CFG_FILE, cfg)
+    
+    kitti_test_set, kitti_test_loader, sampler = build_dataloader(
+        dataset_cfg=cfg.DATA_CONFIG,
+        class_names=cfg.CLASS_NAMES,
+        batch_size=BATCH_SIZE,
+        dist=DIST_TEST, workers=WORKERS, logger=logger, training=False
+    )
+    logger.info(f'Class names of samples: \t{kitti_test_set.class_names}')
+
+    test_adv_dataset = adv_dataset(kitti_test_set)
+    data_dict = test_adv_dataset[0]
+    logger.info(f"The keys of data_dict:\t{data_dict.keys()}") # [1, N, 3]
+    logger.info(f"The size of sampled points:\t{test_adv_dataset.universal_adv_patch.sample_points(50).size()}") # [1, N, 3]
+    logger.info(f"data_dict['points']:\t{data_dict['points'].size()}")
+    logger.info(f"data_dict['gt_boxes']:\t{data_dict['gt_boxes'].size()}")
+        
     V.draw_scenes(
-        points=data_0["points"]
+        points=data_dict['points'][:, 1:], gt_boxes=data_dict['gt_boxes'][0]
     )
