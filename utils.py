@@ -35,7 +35,6 @@ from pcdet.utils import loss_utils
 import pdb
 
 
-
 class DemoDataset(DatasetTemplate):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, gt_path=None, logger=None, ext='.bin'):
         """
@@ -146,8 +145,10 @@ def init_adv_patch_uni(gt_boxes, scale):
     
     bottom = patch.verts_packed()[:, 2].min()
 
+    # Set the center position of the patch in 3-d spaces
     pos_trans = []
     for i in range(n):
+        # dz / 2?
         pos = torch.tensor([gt_boxes[i][0], gt_boxes[i][1], gt_boxes[i][2] + gt_boxes[i][5] / 2 - bottom]).cuda()
         pos_trans.append(pos)
     return patch, deform_vert, pos_trans
@@ -158,20 +159,30 @@ def align_heading_for_adv_patch_uni(gt_boxes, patch, deform_vert, pos_trans):
     n = gt_boxes.size(0)
     aligned_patches = []
 
+    deform_vert_ = deform_vert
+
+    # copy from func init_adv_patch_uni()
+    
+    pos_trans_ = []
+
     for i in range(n):
         # Extract heading from gt_boxes
         heading = gt_boxes[i, 6]
 
         # Rotate the patch and deform_vert based on the heading
         rotated_patch = rotate_patch(patch, heading)
+        bottom = rotated_patch.verts_packed()[:, 2].min()
         rotated_deform_vert = rotate_deform_vert(deform_vert, heading)
 
         # Translate the rotated patch to the position of the gt_boxes
         translated_patch = translate_patch(rotated_patch, pos_trans[i])
 
-        aligned_patches.append((translated_patch, rotated_deform_vert, pos_trans[i]))
+        pos = torch.tensor([gt_boxes[i][0], gt_boxes[i][1], gt_boxes[i][2] + gt_boxes[i][5] / 2 - bottom]).cuda()
+        pos_trans_.append(pos)
 
-    return aligned_patches
+        aligned_patches.append(rotated_patch)
+
+    return aligned_patches, deform_vert_, pos_trans_
 
 def rotate_patch(patch, heading):
     # Rotate the patch based on the heading (in radians) around z-axis
