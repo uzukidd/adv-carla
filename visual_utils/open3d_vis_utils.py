@@ -68,11 +68,11 @@ def draw_scenes_inline(points, gt_boxes=None, ref_boxes=None, ref_labels=None, r
 
 def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_labels=None, ref_scores=None, point_colors=None, draw_origin=True):
     if isinstance(points, torch.Tensor):
-        points = points.cpu().numpy()
+        points = points.detach().cpu().numpy()
     if isinstance(gt_boxes, torch.Tensor):
-        gt_boxes = gt_boxes.cpu().numpy()
+        gt_boxes = gt_boxes.detach().cpu().numpy()
     if isinstance(ref_boxes, torch.Tensor):
-        ref_boxes = ref_boxes.cpu().numpy()
+        ref_boxes = ref_boxes.detach().cpu().numpy()
 
     vis = open3d.visualization.Visualizer()
     vis.create_window()
