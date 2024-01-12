@@ -179,6 +179,9 @@ class adversarial_patch_3d:
         self.deform_vert = torch.zeros_like(basic_mesh.verts_packed(), requires_grad=True).cuda().contiguous()
         self.base_coord = self.get_base_coord()
         
+    def get_basic_mesh(self):
+        return self.basic_mesh
+        
     def get_deformed_mesh(self):
         return self.basic_mesh.offset_verts(self.deform_vert)
     
@@ -186,6 +189,16 @@ class adversarial_patch_3d:
         deformed_mesh = self.get_deformed_mesh()
         pts_sampled = sample_points_from_meshes(deformed_mesh, sample_amount)
         return pts_sampled
+    
+    def update_mesh(self, dst_vert):
+        self.deform_vert = dst_vert.detach().clone()
+        self.deform_vert.requires_grad_(True)
+                
+    def get_mesh_deform_vert(self):
+        return self.deform_vert
+    
+    def get_mesh_gradient(self):
+        return self.deform_vert.grad
     
     def get_base_coord(self):
         base_z = self.basic_mesh.verts_packed()[:, 2].min()
