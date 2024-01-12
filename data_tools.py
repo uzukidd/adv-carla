@@ -177,6 +177,7 @@ class adversarial_patch_3d:
     def __init__(self, basic_mesh):
         self.basic_mesh = basic_mesh
         self.deform_vert = torch.zeros_like(basic_mesh.verts_packed(), requires_grad=True).cuda().contiguous()
+        self.base_coord = self.get_base_coord()
         
     def get_deformed_mesh(self):
         return self.basic_mesh.offset_verts(self.deform_vert)
@@ -185,6 +186,10 @@ class adversarial_patch_3d:
         deformed_mesh = self.get_deformed_mesh()
         pts_sampled = sample_points_from_meshes(deformed_mesh, sample_amount)
         return pts_sampled
+    
+    def get_base_coord(self):
+        base_z = self.basic_mesh.verts_packed()[:, 2].min()
+        return torch.tensor([0.0, 0.0, base_z], requires_grad=False).cuda()
     
     
 class adv_dataset(DatasetTemplate):
@@ -196,12 +201,14 @@ class adv_dataset(DatasetTemplate):
         super().__init__(
             dataset_cfg=parent_dataset.dataset_cfg, class_names=parent_dataset.class_names, training=parent_dataset.training, root_path=parent_dataset.root_path, logger=parent_dataset.logger
         )
+        self.dataset = parent_dataset
         self.parent_dataset = parent_dataset
+        self.evaluating = False
         
         if self.logger is not None:
             self.logger.info('Total samples for dataset: %d' % (len(self)))
             
-        self.universal_adv_patch = adversarial_patch_3d(basic_mesh=self.generate_basic_mesh())
+        self.universal_adv_patch = adversarial_patch_3d(basic_mesh=self.generate_basic_mesh().cuda())
         
 
     def __len__(self):
@@ -219,7 +226,7 @@ class adv_dataset(DatasetTemplate):
     def prepare_adversarial_data(self, data_dict):
         pos_trans = None
         if data_dict.get('gt_boxes', None) is not None:
-            pos_trans = data_dict['gt_boxes'][0, :, 0:3]
+            pos_trans = data_dict['gt_boxes'][0]
             data_dict["points"] = self.attach_adv_patch_scene(data_dict["points"][:, 1:4], 
                                                          self.universal_adv_patch,
                                                          pos_trans, None)
@@ -227,8 +234,10 @@ class adv_dataset(DatasetTemplate):
         return data_dict
     
     @staticmethod
-    def generate_basic_mesh(level:int = 0):
-        mSphere = ico_sphere(level).cuda()
+    def generate_basic_mesh(level:int = 0, scale:float = 0.5):
+        mSphere = ico_sphere(level)
+        # new_verts = mSphere.verts_padded() * scale
+        mSphere = mSphere.update_padded(mSphere.verts_padded() * scale)
         return mSphere
     
     @staticmethod
@@ -241,7 +250,10 @@ class adv_dataset(DatasetTemplate):
         n = pos_trans.__len__()
         
         for i in range(n):
-            pts_set.append(pos_trans[i][None, :] + adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3))
+            extend_pts = pos_trans[i][None, :3] + adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3) - adv_patch.base_coord # [N, 3]
+            extend_pts[:, 2] += pos_trans[i][None, 5] / 2.0
+            pts_set.append(extend_pts)
+            
             
         return torch.concatenate(pts_set)
     
