@@ -107,15 +107,15 @@ for index in range(demo_dataset.__len__()):
     ### NOTE: here actually not one patches for all but generate different patches for each bounding box
     #patches, deform_verts, pos_trans = init_adv_patch(gts[0], scale)
     patch, deform_vert, pos_trans = init_adv_patch_uni(gts[0], scale)
-    print(len(patch), patch)
-    print(len(deform_vert), deform_vert)
-    print(len(pos_trans), pos_trans)
+    # print(len(patch), patch)
+    # print(len(deform_vert), deform_vert)
+    # print(len(pos_trans), pos_trans)
 
     ### TODO: Test Align
     patch, deform_vert, pos_trans = align_heading_for_adv_patch_uni(gts[0], patch, deform_vert, pos_trans)
-    print(len(patch), patch.verts_packed())
-    print(len(deform_vert), deform_vert)
-    print(len(pos_trans), pos_trans)
+    # print(len(patch), patch[0].verts_packed())
+    # print(len(deform_vert), deform_vert)
+    # print(len(pos_trans), pos_trans)
     
     ori_points = attach_adv_patch_scene_uni(
     data_dict["points"][:, 1:4], patch, pos_trans, deform_vert, sample_amount=50)
@@ -138,20 +138,20 @@ for index in range(demo_dataset.__len__()):
     
     fig = plot_scene({
         "original": {
-            "mesh_1": patch
+            "mesh_1": patch[index]
         },
         "adversarial": {
-            "mesh_1": patch.offset_verts(deform_vert)
+            "mesh_1": patch[index].offset_verts(deform_vert)
         },
-        
     })
+
     fig.update_layout(height=1000, width=500)
     fig.show()
 
-    V.draw_scenes(
-        points=new_points.detach()[:, 1:], ref_boxes=pred_dicts[0]['pred_boxes'],
-        ref_scores=pred_dicts[0]['pred_scores'], ref_labels=pred_dicts[0]['pred_labels'], gt_boxes=gts[0][:, :7]
-    )
+    # V.draw_scenes(
+    #     points=new_points.detach()[:, 1:], ref_boxes=pred_dicts[0]['pred_boxes'],
+    #     ref_scores=pred_dicts[0]['pred_scores'], ref_labels=pred_dicts[0]['pred_labels'], gt_boxes=gts[0][:, :7]
+    # )
 
-    if not OPEN3D_FLAG:
-        mlab.show(stop=True)
+    # if not OPEN3D_FLAG:
+    #     mlab.show(stop=True)

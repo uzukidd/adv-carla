@@ -9,6 +9,8 @@ from pytorch3d.utils import ico_sphere
 from pytorch3d.transforms import Scale
 from pytorch3d.vis.plotly_vis import AxisArgs, plot_batch_individually, plot_scene
 
+from pytorch3d.io import load_obj
+
 import matplotlib.pyplot as plt
 import argparse
 import glob
@@ -18,9 +20,10 @@ import easydict
 from scipy.spatial.transform import Rotation as R
 
 try:
-    import open3d
-    from visual_utils import open3d_vis_utils as V
-    OPEN3D_FLAG = True
+    # import open3d
+    # from visual_utils import open3d_vis_utils as V
+    # OPEN3D_FLAG = True
+    ...
 except:
     import mayavi.mlab as mlab
     from visual_utils import visualize_utils as V
@@ -118,6 +121,12 @@ def generate_mono_adv_patch(scale, level: int=0):
     mSphere = mSphere.update_padded(new_verts) 
     return mSphere
 
+def generate_custom_adv_patch(obj_path):
+    verts, faces_all, file_property = load_obj(obj_path)
+    verts, faces = verts, faces_all[0]
+    obj_path = Meshes(verts=[verts], faces=[faces])
+    return obj_path
+
 def init_adv_patch(gt_boxes, scale):
     n = gt_boxes.size(0)
     patches = []
@@ -138,7 +147,11 @@ def init_adv_patch(gt_boxes, scale):
 
 def init_adv_patch_uni(gt_boxes, scale):
     n = gt_boxes.size(0)
-    patch = generate_mono_adv_patch(scale).cuda()
+    # patch = generate_mono_adv_patch(scale).cuda()
+
+    # custom obj path
+    custom_obj_path = "/home/ksas/chw_space/adv-carla/image.obj"
+    patch = generate_custom_adv_patch(custom_obj_path).cuda()
     
     deform_vert = torch.full(patch.verts_packed().shape, 0.0).cuda().contiguous()
     deform_vert.requires_grad_()
@@ -290,7 +303,7 @@ def attach_adv_patch_scene_uni(points, patch, pos_trans, deform_vert, sample_amo
     
     for i in range(n):
         trans_deform_vert = deform_vert + pos_trans[i][None, :]
-        deformed_patch = patch.offset_verts(trans_deform_vert)
+        deformed_patch = patch[i].offset_verts(trans_deform_vert)
         patch_sampled = sample_points_from_meshes(deformed_patch, sample_amount)
         pts_set.append(patch_sampled.view(-1, 3))
         
