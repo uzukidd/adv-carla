@@ -36,7 +36,7 @@ from pcdet.utils import common_utils
 from pcdet.utils import loss_utils
 
 import pdb
-
+import os
 
 class DemoDataset(DatasetTemplate):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, gt_path=None, logger=None, ext='.bin'):
@@ -55,9 +55,29 @@ class DemoDataset(DatasetTemplate):
         self.gt_path = gt_path
         self.ext = ext
         data_file_list = glob.glob(str(root_path / f'*{self.ext}')) if self.root_path.is_dir() else [self.root_path]
-        if self.gt_path: 
-            gts_file_list = glob.glob(str(gt_path / f'*{self.ext}')) if self.gt_path.is_dir() else [self.gt_path]
-            gts_file_list.sort()
+
+        self.only_car = True
+
+        if self.gt_path:
+            
+            self.dataset_labeling_format = None
+            gt_file_list = os.listdir(self.gt_path)
+            first_gt_file = os.path.join(self.gt_path, gt_file_list[0])
+
+            if first_gt_file.endswith(".txt"):
+                logger.info("----------------- Using KITTI Original Labeling Format (*.txt) -----------------")
+                gts_file_list = glob.glob(str(gt_path / '*txt')) if self.gt_path.is_dir() else [self.gt_path]
+                gts_file_list.sort()
+                self.dataset_labeling_format = "txt"
+
+            # elif first_gt_file.endswith(".npy"):
+            #     # TODO: Add support for other format, such as kitii-carla
+            #     pass
+
+            else:
+                gts_file_list = glob.glob(str(gt_path / f'*{self.ext}')) if self.gt_path.is_dir() else [self.gt_path]
+                gts_file_list.sort()
+                self.dataset_labeling_format = "bin"
 
 
         data_file_list.sort()
@@ -82,8 +102,10 @@ class DemoDataset(DatasetTemplate):
                 
         elif self.ext == '.npy':
             points = np.load(self.sample_file_list[index])
-            if self.gt_path:
+            if self.gt_path and self.dataset_labeling_format == "bin":
                 gts = np.load(self.gts_file_list[index])
+            elif self.gt_path and self.dataset_labeling_format == "txt":
+                gts = self.kitti_txt_label_process()
         else:
             raise NotImplementedError
         
@@ -100,7 +122,18 @@ class DemoDataset(DatasetTemplate):
         data_dict = self.prepare_data(data_dict=input_dict)
         
         return data_dict
+
+    def kitti_txt_label_process(self):
         
+        # [x, y, z, dx, dy, dz, heading]
+        gts = None
+
+        for txt_file in self.gts_file_list:
+            with open(txt_file, "r") as file:
+                car_lines = [line.strip() for line in file.readlines() if line.startswith("Car")]
+        
+        return gts
+
 def plot_pointcloud(mesh, title=""):
     # Sample points uniformly from the surface of the mesh.
     points = sample_points_from_meshes(mesh, 50)
