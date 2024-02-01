@@ -25,12 +25,12 @@ from pathlib import Path
 import easydict
 
 try:
-    import open3d
-    from visual_utils import open3d_vis_utils as V
+    #import open3d
+    #from visual_utils import open3d_vis_utils as V
     OPEN3D_FLAG = True
 except:
-    import mayavi.mlab as mlab
-    from visual_utils import visualize_utils as V
+    #import mayavi.mlab as mlab
+    #from visual_utils import visualize_utils as V
     OPEN3D_FLAG = False
 
 
@@ -132,5 +132,5 @@ for index in range(demo_dataset.__len__()):
         ref_scores=pred_dicts[0]['pred_scores'], ref_labels=pred_dicts[0]['pred_labels'], gt_boxes=gts[0][:, :7]
     )
 
-    if not OPEN3D_FLAG:
-        mlab.show(stop=True)
+    #if not OPEN3D_FLAG:
+    #    mlab.show(stop=True)

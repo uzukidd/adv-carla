@@ -336,7 +336,7 @@ def attach_adv_patch_scene_uni(points, patch, pos_trans, deform_vert, sample_amo
     
     for i in range(n):
         trans_deform_vert = deform_vert + pos_trans[i][None, :]
-        deformed_patch = patch[i].offset_verts(trans_deform_vert)
+        deformed_patch = patch.offset_verts(trans_deform_vert)
         patch_sampled = sample_points_from_meshes(deformed_patch, sample_amount)
         pts_set.append(patch_sampled.view(-1, 3))
         
@@ -444,76 +444,43 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
         #ret_dict["loss"].backward()
 
         ## testing loss
+        backbone_network = model.module_list[0]
+        point_headbox = model.module_list[1]
+        pointrcnn_head = model.module_list[2]
         model.eval()
-        #model.zero_grad()
-        ret_dict, tb_dict = model.forward(data_dict)
-        ### point_head.get_loss
-        point_cls_preds = model.module_list[1].forward_ret_dict['point_cls_preds']
-        #point_box_preds = model.module_list[1].forward_ret_dict['point_box_preds']
-        algin_data = model.module_list[1].assign_targets(data_dict)
-        point_cls_labels = algin_data['point_cls_labels']
-        point_cls_labels = point_cls_labels.view(-1)
-        point_cls_preds = point_cls_preds.view(-1, model.module_list[1].num_class)
+        model.pseudo_train()
+        model.zero_grad()
+        pred_dicts, _ = model(data_dict)
+        loss, tb_dict, disp_dict = model.get_training_loss()
 
-        positives = (point_cls_labels > 0)
-        negative_cls_weights = (point_cls_labels == 0) * 1.0
-        cls_weights = (negative_cls_weights + 1.0 * positives).float()
-        pos_normalizer = positives.sum(dim=0).float()
-        cls_weights /= torch.clamp(pos_normalizer, min=1.0)
+        loss_dict = {}
+        point_headbox_cls_loss, cls_loss_dict = point_headbox.get_cls_layer_loss()
+        point_headbox_box_loss, box_loss_dict = point_headbox.get_box_layer_loss()
 
-        one_hot_targets = point_cls_preds.new_zeros(*list(point_cls_labels.shape), model.module_list[1].num_class + 1)
-        one_hot_targets.scatter_(-1, (point_cls_labels * (point_cls_labels >= 0).long()).unsqueeze(dim=-1).long(), 1.0)
-        one_hot_targets = one_hot_targets[..., 1:]
-        cls_loss_src = ClassificationLoss(point_cls_preds, one_hot_targets, weights=cls_weights)
-        point_loss_cls = cls_loss_src.sum()
+        point_features = data_dict['point_features']
+        point_cls_preds = point_headbox.cls_layers(point_features)
+        point_box_preds = point_headbox.box_layers(point_features)
+        point_cls_preds, point_box_preds =point_headbox.generate_predicted_boxes(
+                points=data_dict['point_coords'][:, 1:4],
+                point_cls_preds=point_cls_preds, point_box_preds=point_box_preds
+                )
+        data_dict['batch_cls_preds'] = point_cls_preds
+        data_dict['batch_box_preds'] = point_box_preds
+        targets_dict = pointrcnn_head.proposal_layer(
+                data_dict, nms_config=pointrcnn_head.model_cfg.NMS_CONFIG['TRAIN' if pointrcnn_head.training else 'TEST']
+                )
+        pdb.set_trace()
+        aaaa=targets_dict['batch_box_preds']
+        temp=aaaa.new_zeros((1,512))
+        temp[0,100:152]=aaaa[0:52,0]
+        data_dict['batch_cls_preds'].sum().backward()
+        temp.sum().backward()
+        #pointrcnn_head.forward(data_dict)
+        rcnn_cls_loss, cls_loss_dict = pointrcnn_head.get_box_cls_layer_loss()
 
-        #### roi_head.get_loss
-        #forward_ret_dict = model.module_list[2].assign_targets(data_dict)
-        #code_size = model.module_list[2].box_coder.code_size
-        #rcnn_cls_labels = forward_ret_dict['rcnn_cls_labels']
-        #reg_valid_mask = forward_ret_dict['reg_valid_mask'].view(-1)
-        #gt_boxes3d_ct = forward_ret_dict['gt_of_rois'][..., 0:code_size]
-        #roi_boxes3d = forward_ret_dict['rois']
-        #gt_of_rois_src = forward_ret_dict['gt_of_rois_src'][..., 0:code_size].view(-1, code_size)
-
-        ##### change OpenPCD/pcdet/models/roi_heads/pointrcnn_head.py adding rcnn_reg rcnn_cls to dict
-        ##rcnn_reg = data_dict['rcnn_cls'] 
-        ##rcnn_cls = data_dict['rcnn_reg']
-        #rcnn_reg = data_dict['batch_cls_preds'] 
-        #rcnn_cls = data_dict['batch_box_preds']
-
-        #rcnn_batch_size = gt_boxes3d_ct.view(-1, code_size).shape[0]
-        #fg_mask = (reg_valid_mask > 0)
-        #fg_sum = fg_mask.long().sum().item()
-        #### get_box_cls_layer_loss
-        #pdb.set_trace()
-        ##batch_loss_cls = F.cross_entropy(rcnn_cls, rcnn_cls_labels, reduction='none', ignore_index=-1)
-        ##cls_valid_mask = (rcnn_cls_labels >= 0).float()
-        ##rcnn_loss_cls = (batch_loss_cls * cls_valid_mask).sum() / torch.clamp(cls_valid_mask.sum(), min=1.0)
-        #### get_box+reg_layer_loss
-        ##loss_cfgs = model.module_list[2].model_cfg.LOSS_CONFIG
-        ##WeightedSmoothL1Loss = loss_utils.WeightedSmoothL1Loss(code_weights = loss_cfgs['code_weights'])
-        ##rois_anchor = roi_boxes3d.clone().detach().view(-1, code_size)
-        ##rois_anchor[:, 0:3] = 0
-        ##rois_anchor[:, 6] = 0
-        ##reg_targets = model.module_list[2].box_coder.encode_torch(gt_boxes3d_ct.view(rcnn_batch_size, code_size), rois_anchor)
-        ##rcnn_loss_reg = model.module_list[2].reg_loss_func(rcnn_reg.view(rcnn_batch_size, -1).unsqueeze(dim=0),reg_targets.unsqueeze(dim=0),)
-        ##rcnn_loss_reg = (rcnn_loss_reg.view(rcnn_batch_size, -1) * fg_mask.unsqueeze(dim=-1).float()).sum() / max(fg_sum, 1)
-        ##rcnn_loss_reg = rcnn_loss_reg * loss_cfgs['rcnn_reg_weight']
-        ##rcnn_loss_reg = rcnn_loss_reg.item()
+        rcnn_reg_loss, reg_loss_dict = pointrcnn_head.get_box_reg_layer_loss()
 
 
-
-        #print(ret_dict[0]['pred_labels'].shape)
-        #if iteration >9:
-        #    pdb.set_trace()
-        #deform_vert.retain_grad()
-        #loss_cla = ClassificationLoss(ret_dict[0]['pred_labels'],gt_boxes[0,:,-1],ret_dict[0]['pred_scores'])
-        #loss_det = loss_utils.get_corner_loss_lidar(ret_dict[0]['pred_boxes'], gt_boxes[0,:,:-1])
-        #
-        #loss = loss_cla.sum() + loss_det.sum()
-        #loss.backward()
-        point_loss_cls.backward()
         opt.step()
 
 
