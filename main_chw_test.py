@@ -25,8 +25,8 @@ from pathlib import Path
 import easydict
 
 try:
-    import open3d
-    from visual_utils import open3d_vis_utils as V
+    # import open3d
+    # from visual_utils import open3d_vis_utils as V
     OPEN3D_FLAG = True
 except:
     import mayavi.mlab as mlab
