@@ -217,6 +217,7 @@ class adv_dataset(DatasetTemplate):
         self.dataset = parent_dataset
         self.parent_dataset = parent_dataset
         self.evaluating = False
+        self.enabled_adversarial_patch = True
         
         if self.logger is not None:
             self.logger.info('Total samples for dataset: %d' % (len(self)))
@@ -232,9 +233,13 @@ class adv_dataset(DatasetTemplate):
         batch_dict = kitti_carla_dataset.collate_batch([batch_dict])
         load_data_to_gpu(batch_dict)
         
-        batch_dict=self.prepare_adversarial_data(batch_dict)
+        if self.enabled_adversarial_patch:
+            batch_dict=self.prepare_adversarial_data(batch_dict)
         
         return batch_dict
+    
+    def enable_adversarial_patch(self, enable):
+        self.enabled_adversarial_patch = enable
     
     def prepare_adversarial_data(self, data_dict):
         pos_trans = None
