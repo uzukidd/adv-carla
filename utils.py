@@ -418,6 +418,13 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
 
     ClassificationLoss = loss_utils.SigmoidFocalClassificationLoss(alpha=0.25, gamma=2.0)
 
+    edges_packed = patch.edges_packed()
+    edge_to_mesh_idx = patch.edges_packed_to_mesh_idx()
+    num_edges_per_mesh = patch.num_edges_per_mesh()
+
+    weights = num_edges_per_mesh.gather(0, edge_to_mesh_idx)
+    weights = 1.0 / weights.float()
+
     best_vert = deform_vert.clone()
     best_loss = 9999999
     for iteration in range(max_iter):
@@ -470,6 +477,10 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
                 data_dict, nms_config=pointrcnn_head.model_cfg.NMS_CONFIG['TRAIN' if pointrcnn_head.training else 'TEST']
                 )
         pdb.set_trace()
+        verts_edges = deform_vert[edges_packed]
+        v0, v1 = verts_edges.unbind(1)
+        loss = ((v0 - v1).norm(dim=1, p=2)) ** 2.0
+        loss = loss * weights
         aaaa=targets_dict['batch_box_preds']
         temp=aaaa.new_zeros((1,512))
         temp[0,100:152]=aaaa[0:52,0]
