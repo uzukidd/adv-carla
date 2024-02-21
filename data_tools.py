@@ -280,7 +280,6 @@ class adv_dataset(DatasetTemplate):
         pass
     
 if __name__ == "__main__":
-    pass
     CFG_FILE = "./cfgs/kitti_models/pointrcnn.yaml"
     DATA_PATH = "/home/ksas/Public/datasets/KITTI-CARLA/dataset/Town01"
     cfg_from_yaml_file(CFG_FILE, cfg)
