@@ -239,6 +239,7 @@ class adv_dataset(DatasetTemplate):
         batch_dict = self.parent_dataset.__getitem__(index)
         batch_dict = kitti_carla_dataset.collate_batch([batch_dict])
         load_data_to_gpu(batch_dict)
+    
         
         if self.enabled_adversarial_patch:
             batch_dict=self.prepare_adversarial_data(batch_dict)
@@ -252,6 +253,10 @@ class adv_dataset(DatasetTemplate):
         pos_trans = None
         theta = None
         if data_dict.get('gt_boxes', None) is not None:
+            
+            gt_boxes_selected_idx = (data_dict['gt_boxes'][0, :, 7] == 1)
+            data_dict['gt_boxes'] = data_dict['gt_boxes'][:, gt_boxes_selected_idx]
+            
             pos_trans, theta, _ = torch.split(data_dict['gt_boxes'].squeeze(0), [6, 1, 1], dim=1)
             data_dict["points"] = self.attach_adv_patch_scene(data_dict["points"][:, 1:4], 
                                                          self.universal_adv_patch,
