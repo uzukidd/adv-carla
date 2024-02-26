@@ -213,7 +213,7 @@ class adversarial_patch_3d:
         return self.deform_vert.new_tensor([0.0, 0.0, base_z], requires_grad=False)
     
 class adv_dataset(DatasetTemplate):
-    def __init__(self, parent_dataset):
+    def __init__(self, parent_dataset, target_class = 1):
         """
         Args:
             parent_dataset:
@@ -225,6 +225,7 @@ class adv_dataset(DatasetTemplate):
         self.parent_dataset = parent_dataset
         self.evaluating = False
         self.enabled_adversarial_patch = True
+        self.target_class = target_class
         
         if self.logger is not None:
             self.logger.info('Total samples for dataset: %d' % (len(self)))
@@ -254,7 +255,7 @@ class adv_dataset(DatasetTemplate):
         theta = None
         if data_dict.get('gt_boxes', None) is not None:
             
-            gt_boxes_selected_idx = (data_dict['gt_boxes'][0, :, 7] == 1)
+            gt_boxes_selected_idx = (data_dict['gt_boxes'][0, :, 7] == self.target_class)
             data_dict['gt_boxes'] = data_dict['gt_boxes'][:, gt_boxes_selected_idx]
             
             pos_trans, theta, _ = torch.split(data_dict['gt_boxes'].squeeze(0), [6, 1, 1], dim=1)
