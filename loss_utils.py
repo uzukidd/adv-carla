@@ -22,8 +22,10 @@ from pytorch3d.transforms import Scale
 from pytorch3d.vis.plotly_vis import AxisArgs, plot_batch_individually, plot_scene
 
 class mesh_objectwise_loss(nn.Module):
-    def __init__(self, verbose: bool = False):
+    def __init__(self, freezed_iou: bool = False, normalized: bool = False, verbose: bool = False):
         super().__init__()
+        self.freezed_iou = freezed_iou
+        self.normalized = normalized
         self.verbose = verbose
     
     def objectwise_loss(self, cls_pred: torch.Tensor, box_preds: torch.Tensor, gt_box: torch.Tensor, target_class_logit: int):
@@ -80,17 +82,27 @@ class mesh_objectwise_loss(nn.Module):
                                  box_preds = batch_box_preds[pts_idx_mask],
                                  gt_box = gt_boxes[box_idx_mask],
                                  target_class_logit = target_class_logit)
-            object_loss = -1 * torch.log(1.0 - max_logit) * iou_3d
-            if ret_part_loss:
-                max_logit_item.append(max_logit)
-                iou_3d_item.append(iou_3d)
+            if self.freezed_iou:
+                iou_3d = iou_3d.detach()
+            
+            object_loss = -1.0 * torch.log(1.0 - max_logit)
+            max_logit_item.append(max_logit)
+            iou_3d_item.append(iou_3d)
             total_loss.append(object_loss)
         
-        total_loss = torch.stack(total_loss).sum()
+        iou_3d_item = torch.stack(iou_3d_item)
+        
+        if self.normalized:
+            iou_3d_item = iou_3d_item / iou_3d_item.sum()
+        
+        total_loss = torch.stack(total_loss)
+        total_loss = total_loss * iou_3d_item
+        total_loss = total_loss.sum()
+  
         
         if ret_part_loss:
             max_logit_item = torch.stack(max_logit_item).sum()
-            iou_3d_item = torch.stack(iou_3d_item).sum()
+            iou_3d_item = iou_3d_item.sum()
             return total_loss, max_logit_item, iou_3d_item
         else:
             return total_loss

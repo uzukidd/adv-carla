@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import pdb
 import glob
 
+from copy import deepcopy
 from pathlib import Path
 
 from pytorch3d.ops import sample_points_from_meshes, laplacian
@@ -213,7 +214,7 @@ class adversarial_patch_3d:
         return self.deform_vert.new_tensor([0.0, 0.0, base_z], requires_grad=False)
     
 class adv_dataset(DatasetTemplate):
-    def __init__(self, parent_dataset, target_class = 1):
+    def __init__(self, parent_dataset, surrogate_model = None, target_class = 1):
         """
         Args:
             parent_dataset:
@@ -225,7 +226,8 @@ class adv_dataset(DatasetTemplate):
         self.parent_dataset = parent_dataset
         self.evaluating = False
         self.enabled_adversarial_patch = True
-        self.target_class = target_class
+        self.target_class = target_class # 0 for background
+        self.surrogate_model = surrogate_model
         
         if self.logger is not None:
             self.logger.info('Total samples for dataset: %d' % (len(self)))
@@ -240,7 +242,6 @@ class adv_dataset(DatasetTemplate):
         batch_dict = self.parent_dataset.__getitem__(index)
         batch_dict = kitti_carla_dataset.collate_batch([batch_dict])
         load_data_to_gpu(batch_dict)
-    
         
         if self.enabled_adversarial_patch:
             batch_dict=self.prepare_adversarial_data(batch_dict)
@@ -253,16 +254,27 @@ class adv_dataset(DatasetTemplate):
     def prepare_adversarial_data(self, data_dict):
         pos_trans = None
         theta = None
-        if data_dict.get('gt_boxes', None) is not None:
+        if self.surrogate_model is not None:
+            pred_dicts = None
+            surrogate_dict = deepcopy(data_dict)
+            with torch.no_grad() :
+                self.surrogate_model.eval()
+                pred_dicts, _ = self.surrogate_model.forward(surrogate_dict)
+                gts = pred_dicts[0]['pred_boxes'][pred_dicts[0]['pred_labels'] == self.target_class].detach().clone()
+                gt_classes = torch.ones(gts.size(0)).cuda() * self.target_class
+                gts = torch.concatenate([gts, gt_classes.view(-1, 1)], axis=1)
+                data_dict['gt_boxes'] = gts.view(1, -1, 8)
+            
+        elif data_dict.get('gt_boxes', None) is not None:
             
             gt_boxes_selected_idx = (data_dict['gt_boxes'][0, :, 7] == self.target_class)
             data_dict['gt_boxes'] = data_dict['gt_boxes'][:, gt_boxes_selected_idx]
             
-            pos_trans, theta, _ = torch.split(data_dict['gt_boxes'].squeeze(0), [6, 1, 1], dim=1)
-            data_dict["points"] = self.attach_adv_patch_scene(data_dict["points"][:, 1:4], 
-                                                         self.universal_adv_patch,
-                                                         pos_trans, theta, None)
-            data_dict["points"] = F.pad(data_dict["points"], (1, 1), "constant", 0)
+        pos_trans, theta, _ = torch.split(data_dict['gt_boxes'].squeeze(0), [6, 1, 1], dim=1)
+        data_dict["points"] = self.attach_adv_patch_scene(data_dict["points"][:, 1:4], 
+                                                        self.universal_adv_patch,
+                                                        pos_trans, theta, None)
+        data_dict["points"] = F.pad(data_dict["points"], (1, 1), "constant", 0)
         return data_dict
     
     @staticmethod
