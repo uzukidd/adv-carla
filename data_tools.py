@@ -180,6 +180,7 @@ class adversarial_patch_3d:
         self.basic_mesh: Meshes = basic_mesh
         self.deform_vert: torch.Tensor = torch.zeros_like(basic_mesh.verts_packed(), requires_grad=True).cuda().contiguous()
         self.base_coord: torch.Tensor = self.get_base_coord()
+        print(f"mesh vertex count : {self.basic_mesh.verts_packed().size()}")
         
     def get_basic_mesh(self):
         return self.basic_mesh
@@ -232,7 +233,9 @@ class adv_dataset(DatasetTemplate):
         if self.logger is not None:
             self.logger.info('Total samples for dataset: %d' % (len(self)))
             
-        self.universal_adv_patch = adversarial_patch_3d(basic_mesh=self.generate_basic_mesh().cuda())
+        self.universal_adv_patch = adversarial_patch_3d(basic_mesh=self.generate_basic_mesh(
+            level=2,
+            scale=0.8).cuda())
         
 
     def __len__(self):
