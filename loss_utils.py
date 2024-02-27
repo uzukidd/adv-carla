@@ -47,7 +47,6 @@ class mesh_objectwise_loss(nn.Module):
 
     def forward(self, batch_dict, point_coords, gt_boxes: torch.Tensor, target_class: int, ret_part_loss: bool = False):
         """
-        定义损失函数的前向计算逻辑。
 
         Args:
         - batch_cls_preds: [N, 3]
