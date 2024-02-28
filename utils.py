@@ -259,7 +259,7 @@ def rotate_points(points, angle):
         [0, 0, 1]
     ], dtype=points.dtype, device=points.device)
 
-    rotated_points = torch.matmul(points, rotation_matrix)
+    rotated_points = torch.matmul(points, rotation_matrix.T)
     return rotated_points
 
 # def align_heading_for_adv_patch_uni(gt_boxes, init_patch):

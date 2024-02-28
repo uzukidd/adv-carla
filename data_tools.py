@@ -5,9 +5,11 @@ import torch.nn.functional as F
 import pdb
 import glob
 
+from copy import deepcopy
 from pathlib import Path
 
-from pytorch3d.ops import sample_points_from_meshes
+from pytorch3d.ops import sample_points_from_meshes, laplacian
+from pytorch3d.loss import mesh_laplacian_smoothing
 from pytorch3d.structures import Meshes, join_meshes_as_batch
 from pytorch3d.utils import ico_sphere
 from pytorch3d.transforms import Scale
@@ -175,9 +177,10 @@ class kitti_carla_dataset(DatasetTemplate):
     
 class adversarial_patch_3d:
     def __init__(self, basic_mesh):
-        self.basic_mesh = basic_mesh
-        self.deform_vert = torch.zeros_like(basic_mesh.verts_packed(), requires_grad=True).cuda().contiguous()
-        self.base_coord = self.get_base_coord()
+        self.basic_mesh: Meshes = basic_mesh
+        self.deform_vert: torch.Tensor = torch.zeros_like(basic_mesh.verts_packed(), requires_grad=True).cuda().contiguous()
+        self.base_coord: torch.Tensor = self.get_base_coord()
+        print(f"mesh vertex count : {self.basic_mesh.verts_packed().size()}")
         
     def get_basic_mesh(self):
         return self.basic_mesh
@@ -193,20 +196,26 @@ class adversarial_patch_3d:
     def update_mesh(self, dst_vert):
         self.deform_vert = dst_vert.detach().clone()
         self.deform_vert.requires_grad_(True)
-                
+
+    def get_laplacian_loss(self):
+        deformed_mesh = self.get_deformed_mesh()
+        return mesh_laplacian_smoothing(deformed_mesh)
+
     def get_mesh_deform_vert(self):
         return self.deform_vert
     
     def get_mesh_gradient(self):
         return self.deform_vert.grad
     
+    def clear_mesh_gradient(self):
+        self.deform_vert.grad.zero_()
+    
     def get_base_coord(self):
         base_z = self.basic_mesh.verts_packed()[:, 2].min()
-        return torch.tensor([0.0, 0.0, base_z], requires_grad=False).cuda()
-    
+        return self.deform_vert.new_tensor([0.0, 0.0, base_z], requires_grad=False)
     
 class adv_dataset(DatasetTemplate):
-    def __init__(self, parent_dataset):
+    def __init__(self, parent_dataset, sample_amount = 50, surrogate_model = None, target_class = 1):
         """
         Args:
             parent_dataset:
@@ -218,11 +227,16 @@ class adv_dataset(DatasetTemplate):
         self.parent_dataset = parent_dataset
         self.evaluating = False
         self.enabled_adversarial_patch = True
+        self.target_class = target_class # 0 for background
+        self.surrogate_model = surrogate_model
+        self.sample_amount = sample_amount
         
         if self.logger is not None:
             self.logger.info('Total samples for dataset: %d' % (len(self)))
             
-        self.universal_adv_patch = adversarial_patch_3d(basic_mesh=self.generate_basic_mesh().cuda())
+        self.universal_adv_patch = adversarial_patch_3d(basic_mesh=self.generate_basic_mesh(
+            level=2,
+            scale=0.8).cuda())
         
 
     def __len__(self):
@@ -243,12 +257,28 @@ class adv_dataset(DatasetTemplate):
     
     def prepare_adversarial_data(self, data_dict):
         pos_trans = None
-        if data_dict.get('gt_boxes', None) is not None:
-            pos_trans = data_dict['gt_boxes'][0]
-            data_dict["points"] = self.attach_adv_patch_scene(data_dict["points"][:, 1:4], 
-                                                         self.universal_adv_patch,
-                                                         pos_trans, None)
-            data_dict["points"] = F.pad(data_dict["points"], (1, 1), "constant", 0)
+        theta = None
+        if self.surrogate_model is not None:
+            pred_dicts = None
+            surrogate_dict = deepcopy(data_dict)
+            with torch.no_grad() :
+                self.surrogate_model.eval()
+                pred_dicts, _ = self.surrogate_model.forward(surrogate_dict)
+                gts = pred_dicts[0]['pred_boxes'].detach().clone()
+                gt_classes = pred_dicts[0]['pred_labels'].detach().clone()
+                gts = torch.concatenate([gts, gt_classes.view(-1, 1)], axis=1)
+                data_dict['gt_boxes'] = gts.view(1, -1, 8)
+            
+        elif data_dict.get('gt_boxes', None) is not None:
+            pass
+        
+        pos_trans, theta, gt_labels = torch.split(data_dict['gt_boxes'].squeeze(0), [6, 1, 1], dim=1)
+        pos_trans = pos_trans[gt_labels[:, 0] == self.target_class]
+        theta = theta[gt_labels[:, 0] == self.target_class]
+        data_dict["points"] = self.attach_adv_patch_scene(data_dict["points"][:, 1:4], 
+                                                        self.universal_adv_patch,
+                                                        pos_trans, theta, self.sample_amount)
+        data_dict["points"] = F.pad(data_dict["points"], (1, 1), "constant", 0)
         return data_dict
     
     @staticmethod
@@ -259,7 +289,7 @@ class adv_dataset(DatasetTemplate):
         return mSphere
     
     @staticmethod
-    def attach_adv_patch_scene(points, adv_patch:adversarial_patch_3d, pos_trans, deform_vert, sample_amount = 50):
+    def attach_adv_patch_scene(points, adv_patch:adversarial_patch_3d, pos_trans, theta, sample_amount = 50):
         pts_set = [points]
         
         if pos_trans is None:
@@ -268,12 +298,40 @@ class adv_dataset(DatasetTemplate):
         n = pos_trans.__len__()
         
         for i in range(n):
-            extend_pts = pos_trans[i][None, :3] + adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3) - adv_patch.base_coord # [N, 3]
+            pts = adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3) - adv_patch.base_coord
+            extend_pts = pos_trans[i][None, :3] + adv_dataset.rotate_points(
+                                                    pts, theta[i]) 
             extend_pts[:, 2] += pos_trans[i][None, 5] / 2.0
+            
+            # print(f"extend_pts:\t{extend_pts}")
+            
             pts_set.append(extend_pts)
             
-            
         return torch.concatenate(pts_set)
+    
+    @staticmethod
+    def rotate_points(points: torch.Tensor, angle: torch.Tensor):
+        """
+        Rotate a set of points around the origin by a given angle.
+
+        Args:
+            points (torch.Tensor): Tensor of shape (N, 3) representing N points in 3D space.
+            angle (torch.Tensor): The angle of rotation in radians.
+
+        Returns:
+            torch.Tensor: Tensor of shape (N, 3) containing the rotated points.
+        """
+        cos_theta = torch.cos(angle)
+        sin_theta = torch.sin(angle)
+
+        rotation_matrix = points.new_tensor([
+            [cos_theta, -sin_theta, 0.0],
+            [sin_theta, cos_theta, 0.0],
+            [0.0, 0.0, 1.0]
+        ])
+
+        rotated_points = torch.matmul(points, rotation_matrix.T)
+        return rotated_points
     
     @staticmethod
     def generate_adv_sample(batch_dict):
