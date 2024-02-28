@@ -62,9 +62,13 @@ class mesh_objectwise_loss(nn.Module):
         """
         batch_cls_preds = batch_dict["batch_cls_preds"] # [N, 3]
         batch_box_preds = batch_dict["batch_box_preds"] # [N, 7]
-        gt_boxes, gt_labels = torch.split(gt_boxes.squeeze(dim=0), [7, 1], dim=1)  # [N, 7], [N, 1]
-        target_class_logit = target_class - 1
         
+        gt_boxes, gt_labels = torch.split(gt_boxes.squeeze(dim=0), [7, 1], dim=1)  # [N, 7], [N, 1]
+        gt_boxes = gt_boxes[gt_labels[:, 0] == target_class]
+        gt_labels = gt_labels[gt_labels[:, 0] == target_class]
+        
+        target_class_logit = target_class - 1
+
         assert gt_boxes.size(0), "at leaset one gt box exists."
         
         box_idxs_of_pts = points_in_boxes_gpu(

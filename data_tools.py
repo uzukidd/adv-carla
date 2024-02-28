@@ -263,17 +263,17 @@ class adv_dataset(DatasetTemplate):
             with torch.no_grad() :
                 self.surrogate_model.eval()
                 pred_dicts, _ = self.surrogate_model.forward(surrogate_dict)
-                gts = pred_dicts[0]['pred_boxes'][pred_dicts[0]['pred_labels'] == self.target_class].detach().clone()
-                gt_classes = torch.ones(gts.size(0)).cuda() * self.target_class
+                gts = pred_dicts[0]['pred_boxes'].detach().clone()
+                gt_classes = pred_dicts[0]['pred_labels'].detach().clone()
                 gts = torch.concatenate([gts, gt_classes.view(-1, 1)], axis=1)
                 data_dict['gt_boxes'] = gts.view(1, -1, 8)
             
         elif data_dict.get('gt_boxes', None) is not None:
-            
-            gt_boxes_selected_idx = (data_dict['gt_boxes'][0, :, 7] == self.target_class)
-            data_dict['gt_boxes'] = data_dict['gt_boxes'][:, gt_boxes_selected_idx]
-            
-        pos_trans, theta, _ = torch.split(data_dict['gt_boxes'].squeeze(0), [6, 1, 1], dim=1)
+            pass
+        
+        pos_trans, theta, gt_labels = torch.split(data_dict['gt_boxes'].squeeze(0), [6, 1, 1], dim=1)
+        pos_trans = pos_trans[gt_labels[:, 0] == self.target_class]
+        theta = theta[gt_labels[:, 0] == self.target_class]
         data_dict["points"] = self.attach_adv_patch_scene(data_dict["points"][:, 1:4], 
                                                         self.universal_adv_patch,
                                                         pos_trans, theta, None)
