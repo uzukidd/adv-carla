@@ -38,6 +38,9 @@ from pcdet.utils import loss_utils
 import pdb
 import os
 
+from eval_utils import eval_utils
+from loss_utils import mesh_objectwise_loss
+
 class DemoDataset(DatasetTemplate):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, gt_path=None, logger=None, ext='.bin'):
         """
@@ -424,6 +427,10 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
 
     weights = num_edges_per_mesh.gather(0, edge_to_mesh_idx)
     weights = 1.0 / weights.float()
+    
+    criterion = mesh_objectwise_loss(freezed_iou = True,
+                normalized = False,
+                verbose=False)
 
     best_vert = deform_vert.clone()
     best_loss = 9999999
@@ -441,60 +448,29 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
         new_points = F.pad(new_points, (1,1), "constant", 0)
         data_dict["points"] = new_points
 
-        #### training loss
-        #model.train() # set loss easily but have potential problem
-        #model.zero_grad()
-        #ret_dict, tb_dict, _ = model.forward(data_dict)
-        #
-        #print(ret_dict["loss"])
-        #loss = ret_dict["loss"]
-        #ret_dict["loss"].backward()
 
         ## testing loss
-        backbone_network = model.module_list[0]
-        point_headbox = model.module_list[1]
-        pointrcnn_head = model.module_list[2]
         model.eval()
-        model.pseudo_train()
         model.zero_grad()
-        pred_dicts, _ = model(data_dict)
-        loss, tb_dict, disp_dict = model.get_training_loss()
+        pred_dicts, _ = model(batch_dict)
+        point_headbox_ret_dict = point_headbox.forward_ret_dict
+        pointrcnn_head_ret_dict = pointrcnn_head.forward_ret_dict
 
-        loss_dict = {}
-        point_headbox_cls_loss, cls_loss_dict = point_headbox.get_cls_layer_loss()
-        point_headbox_box_loss, box_loss_dict = point_headbox.get_box_layer_loss()
+        mesh_loss = criterion(batch_dict = point_headbox_ret_dict,
+                point_coords = batch_dict["points"][:, 1:4].squeeze(dim=0),
+                gt_boxes = batch_dict["gt_boxes"],
+                target_class = 1,
+                ret_part_loss = False)
 
-        #point_features = data_dict['point_features']
-        #point_cls_preds = point_headbox.cls_layers(point_features)
-        #point_box_preds = point_headbox.box_layers(point_features)
-        #point_cls_preds, point_box_preds =point_headbox.generate_predicted_boxes(
-        #        points=data_dict['point_coords'][:, 1:4],
-        #        point_cls_preds=point_cls_preds, point_box_preds=point_box_preds
-        #        )
-        #data_dict['batch_cls_preds'] = point_cls_preds
-        #data_dict['batch_box_preds'] = point_box_preds
-        #targets_dict = pointrcnn_head.proposal_layer(
-        #        data_dict, nms_config=pointrcnn_head.model_cfg.NMS_CONFIG['TRAIN' if pointrcnn_head.training else 'TEST']
-        #        )
-        pdb.set_trace()
         verts_edges = deform_vert[edges_packed]
         v0, v1 = verts_edges.unbind(1)
         loss_v = ((v0 - v1).norm(dim=1, p=2)) ** 2.0
         loss_v = loss_v * weights
-        #aaaa=targets_dict['batch_box_preds']
-        #temp=aaaa.new_zeros((1,512))
-        #temp[0,100:152]=aaaa[0:52,0]
-        #data_dict['batch_cls_preds'].sum().backward()
-        #temp.sum().backward()
-        ##pointrcnn_head.forward(data_dict)
-        #rcnn_cls_loss, cls_loss_dict = pointrcnn_head.get_box_cls_layer_loss()
 
-        #rcnn_reg_loss, reg_loss_dict = pointrcnn_head.get_box_reg_layer_loss()
-
-
-        loss = point_headbox_cls_loss + point_headbox_box_loss + loss_v.sum()
+        loss = mesh_loss + loss_v.sum()
         loss.backward()
         opt.step()
+        pdb.set_trace()
 
 
         ### save best
