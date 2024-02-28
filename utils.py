@@ -464,41 +464,43 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
         point_headbox_cls_loss, cls_loss_dict = point_headbox.get_cls_layer_loss()
         point_headbox_box_loss, box_loss_dict = point_headbox.get_box_layer_loss()
 
-        point_features = data_dict['point_features']
-        point_cls_preds = point_headbox.cls_layers(point_features)
-        point_box_preds = point_headbox.box_layers(point_features)
-        point_cls_preds, point_box_preds =point_headbox.generate_predicted_boxes(
-                points=data_dict['point_coords'][:, 1:4],
-                point_cls_preds=point_cls_preds, point_box_preds=point_box_preds
-                )
-        data_dict['batch_cls_preds'] = point_cls_preds
-        data_dict['batch_box_preds'] = point_box_preds
-        targets_dict = pointrcnn_head.proposal_layer(
-                data_dict, nms_config=pointrcnn_head.model_cfg.NMS_CONFIG['TRAIN' if pointrcnn_head.training else 'TEST']
-                )
+        #point_features = data_dict['point_features']
+        #point_cls_preds = point_headbox.cls_layers(point_features)
+        #point_box_preds = point_headbox.box_layers(point_features)
+        #point_cls_preds, point_box_preds =point_headbox.generate_predicted_boxes(
+        #        points=data_dict['point_coords'][:, 1:4],
+        #        point_cls_preds=point_cls_preds, point_box_preds=point_box_preds
+        #        )
+        #data_dict['batch_cls_preds'] = point_cls_preds
+        #data_dict['batch_box_preds'] = point_box_preds
+        #targets_dict = pointrcnn_head.proposal_layer(
+        #        data_dict, nms_config=pointrcnn_head.model_cfg.NMS_CONFIG['TRAIN' if pointrcnn_head.training else 'TEST']
+        #        )
         pdb.set_trace()
         verts_edges = deform_vert[edges_packed]
         v0, v1 = verts_edges.unbind(1)
-        loss = ((v0 - v1).norm(dim=1, p=2)) ** 2.0
-        loss = loss * weights
-        aaaa=targets_dict['batch_box_preds']
-        temp=aaaa.new_zeros((1,512))
-        temp[0,100:152]=aaaa[0:52,0]
-        data_dict['batch_cls_preds'].sum().backward()
-        temp.sum().backward()
-        #pointrcnn_head.forward(data_dict)
-        rcnn_cls_loss, cls_loss_dict = pointrcnn_head.get_box_cls_layer_loss()
+        loss_v = ((v0 - v1).norm(dim=1, p=2)) ** 2.0
+        loss_v = loss_v * weights
+        #aaaa=targets_dict['batch_box_preds']
+        #temp=aaaa.new_zeros((1,512))
+        #temp[0,100:152]=aaaa[0:52,0]
+        #data_dict['batch_cls_preds'].sum().backward()
+        #temp.sum().backward()
+        ##pointrcnn_head.forward(data_dict)
+        #rcnn_cls_loss, cls_loss_dict = pointrcnn_head.get_box_cls_layer_loss()
 
-        rcnn_reg_loss, reg_loss_dict = pointrcnn_head.get_box_reg_layer_loss()
+        #rcnn_reg_loss, reg_loss_dict = pointrcnn_head.get_box_reg_layer_loss()
 
 
+        loss = point_headbox_cls_loss + point_headbox_box_loss + loss_v.sum()
+        loss.backward()
         opt.step()
 
 
         ### save best
-        if point_loss_cls < best_loss:
+        if loss < best_loss:
             best_vert = deform_vert.clone()
-            best_loss = point_loss_cls
+            best_loss = loss
 
     return best_vert
 
