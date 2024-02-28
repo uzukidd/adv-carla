@@ -215,7 +215,7 @@ class adversarial_patch_3d:
         return self.deform_vert.new_tensor([0.0, 0.0, base_z], requires_grad=False)
     
 class adv_dataset(DatasetTemplate):
-    def __init__(self, parent_dataset, surrogate_model = None, target_class = 1):
+    def __init__(self, parent_dataset, sample_amount = 50, surrogate_model = None, target_class = 1):
         """
         Args:
             parent_dataset:
@@ -229,6 +229,7 @@ class adv_dataset(DatasetTemplate):
         self.enabled_adversarial_patch = True
         self.target_class = target_class # 0 for background
         self.surrogate_model = surrogate_model
+        self.sample_amount = sample_amount
         
         if self.logger is not None:
             self.logger.info('Total samples for dataset: %d' % (len(self)))
@@ -276,7 +277,7 @@ class adv_dataset(DatasetTemplate):
         theta = theta[gt_labels[:, 0] == self.target_class]
         data_dict["points"] = self.attach_adv_patch_scene(data_dict["points"][:, 1:4], 
                                                         self.universal_adv_patch,
-                                                        pos_trans, theta, None)
+                                                        pos_trans, theta, self.sample_amount)
         data_dict["points"] = F.pad(data_dict["points"], (1, 1), "constant", 0)
         return data_dict
     
@@ -288,7 +289,7 @@ class adv_dataset(DatasetTemplate):
         return mSphere
     
     @staticmethod
-    def attach_adv_patch_scene(points, adv_patch:adversarial_patch_3d, pos_trans, theta, deform_vert, sample_amount = 50):
+    def attach_adv_patch_scene(points, adv_patch:adversarial_patch_3d, pos_trans, theta, sample_amount = 50):
         pts_set = [points]
         
         if pos_trans is None:
