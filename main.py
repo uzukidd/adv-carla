@@ -1,21 +1,30 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-
-seed = 2024
-
-torch.manual_seed(seed)
-torch.cuda.manual_seed_all(seed)
-np.random.seed(seed)
-
-if torch.cuda.is_available():
-    torch.cuda.set_device(0)
+import torch.optim as optim
 
 from pytorch3d.ops import sample_points_from_meshes
 from pytorch3d.structures import Meshes, join_meshes_as_batch
 from pytorch3d.utils import ico_sphere
 from pytorch3d.transforms import Scale
 from pytorch3d.vis.plotly_vis import AxisArgs, plot_batch_individually, plot_scene
+
+from pcdet.config import cfg, cfg_from_yaml_file
+from pcdet.datasets import DatasetTemplate
+from pcdet.models import build_network, load_data_to_gpu
+from pcdet.utils import common_utils
+
+UNI_RANDOM_SEED = 2024
+
+np.random.seed(UNI_RANDOM_SEED) 
+torch.manual_seed(UNI_RANDOM_SEED)
+
+torch.cuda.manual_seed(UNI_RANDOM_SEED)
+torch.cuda.manual_seed_all(UNI_RANDOM_SEED)
+
+if torch.cuda.is_available():
+    torch.cuda.set_device(0)
+
 
 
 import matplotlib.pyplot as plt
@@ -34,10 +43,7 @@ except:
     OPEN3D_FLAG = False
 
 
-from pcdet.config import cfg, cfg_from_yaml_file
-from pcdet.datasets import DatasetTemplate
-from pcdet.models import build_network, load_data_to_gpu
-from pcdet.utils import common_utils
+
 
 from utils import *
 import pdb

@@ -163,24 +163,6 @@ def generate_custom_adv_patch(obj_path):
     obj_path = Meshes(verts=[verts], faces=[faces])
     return obj_path
 
-def init_adv_patch(gt_boxes, scale):
-    n = gt_boxes.size(0)
-    patches = []
-    pos_trans = []
-    deform_verts = []
-    for i in range(n): 
-        patch = generate_mono_adv_patch(scale).cuda()
-        deform_vert = torch.full(patch.verts_packed().shape, 0.0).cuda().contiguous()
-        deform_vert.requires_grad_()
-        bottom = patch.verts_packed()[:, 2].min()
-        pos = torch.tensor([gt_boxes[i][0], gt_boxes[i][1], gt_boxes[i][2] + gt_boxes[i][5] / 2 - bottom]).cuda()
-        
-        patches.append(patch)
-        deform_verts.append(deform_vert)
-        pos_trans.append(pos)
-        
-    return patches, deform_verts, pos_trans
-
 def init_adv_patch_uni(gt_boxes, scale):
     n = gt_boxes.size(0)
     # patch = generate_mono_adv_patch(scale).cuda()
@@ -320,18 +302,6 @@ def rotate_points(points, angle):
 #     return rotated_patch_verts
 
 ### TODO: Test End
-
-def attach_adv_patch_scene(points, patches, pos_trans, deform_verts, sample_amount = 50):
-    n = patches.__len__()
-    pts_set = [points]
-    
-    for i in range(n):
-        trans_deform_vert = deform_verts[i] + pos_trans[i][None, :]
-        deformed_patch = patches[i].offset_verts(trans_deform_vert)
-        patch_sampled = sample_points_from_meshes(deformed_patch, sample_amount)
-        pts_set.append(patch_sampled.view(-1, 3))
-        
-    return torch.concatenate(pts_set)
     
 def attach_adv_patch_scene_uni(points, patch, pos_trans, deform_vert, sample_amount = 50):
     n = pos_trans.__len__()
@@ -361,30 +331,6 @@ def predict(model, points, data_template):
         pred_dicts, _ = model.forward(data_dict) 
 
     return pred_dicts
-
-def attack(model, points, gt_boxes, eps, data_template):
-    data_dict = {
-        
-    }
-    data_dict["gt_boxes"] = gt_boxes
-    data_dict["frame_id"] = data_template["frame_id"]
-    data_dict["use_lead_xyz"] = data_template["use_lead_xyz"].clone().detach()
-    data_dict["batch_size"] = data_template["batch_size"]
-    data_dict["points"] = points.clone().detach()
-    data_dict["points"].requires_grad = True
-
-    model.train()
-    model.zero_grad()
-    ret_dict, tb_dict, _ = model.forward(data_dict)
-    
-    print(ret_dict["loss"])
-    ret_dict["loss"].backward()
-
-    grad = data_dict["points"].grad.data
-    grad[:, [0, 4]] = 0
-    pert = eps * torch.sign(grad)
-        
-    return (data_dict["points"] + pert).clone().detach()
  
 def patch_attack(model, points, gt_boxes, patches, deform_verts, pos_trans, eps, data_template):
     data_dict = {
@@ -418,8 +364,6 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
 
     deform_vert = torch.full(deform_ori.shape, 0.000001, device='cuda', requires_grad=True)
     opt = optim.Adam([deform_vert], lr=1e-2, weight_decay=0.)
-
-    ClassificationLoss = loss_utils.SigmoidFocalClassificationLoss(alpha=0.25, gamma=2.0)
 
     edges_packed = patch.edges_packed()
     edge_to_mesh_idx = patch.edges_packed_to_mesh_idx()
@@ -461,6 +405,8 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
                 gt_boxes = batch_dict["gt_boxes"],
                 target_class = 1,
                 ret_part_loss = False)
+        
+        #regular_loss = kitti_adv_dataset.universal_adv_patch.get_laplacian_loss()
 
         verts_edges = deform_vert[edges_packed]
         v0, v1 = verts_edges.unbind(1)
@@ -469,6 +415,8 @@ def patch_obj_attack(model, points, gt_boxes, patch, deform_ori, pos_trans, eps,
 
         loss = mesh_loss + loss_v.sum()
         loss.backward()
+        
+        
         opt.step()
         pdb.set_trace()
 
