@@ -285,7 +285,12 @@ class adv_dataset(DatasetTemplate):
     def generate_basic_mesh(level:int = 0, scale:float = 0.5):
         mSphere = ico_sphere(level)
         # new_verts = mSphere.verts_padded() * scale
-        mSphere = mSphere.update_padded(mSphere.verts_padded() * scale)
+        new_vert = mSphere.verts_padded()
+        new_vert[:, :, 0] = new_vert[:, :, 0] * 0.7
+        new_vert[:, :, 1] = new_vert[:, :, 1] * 0.7
+        new_vert[:, :, 2] = new_vert[:, :, 2] * 0.5
+        new_vert[:, :, 0] = new_vert[:, :, 0] - 1.0
+        mSphere = mSphere.update_padded(new_vert)
         return mSphere
     
     @staticmethod
@@ -300,7 +305,7 @@ class adv_dataset(DatasetTemplate):
         for i in range(n):
             pts = adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3) - adv_patch.base_coord
             extend_pts = pos_trans[i][None, :3] + adv_dataset.rotate_points(
-                                                    pts, theta[i]) 
+                                                    pts, theta[i])
             extend_pts[:, 2] += pos_trans[i][None, 5] / 2.0
             
             # print(f"extend_pts:\t{extend_pts}")
