@@ -109,23 +109,3 @@ class mesh_objectwise_loss(nn.Module):
             return total_loss, max_logit_item, iou_3d_item
         else:
             return total_loss
-        
-        # logit, pred_classes = batch_cls_preds.max(dim=-1)
-        # target_idx = (pred_classes == target_class)
-        
-        # max_logit, max_logit_idx = cls_preds_softmax[target_idx, target_class].max(dim=-1)
-        # box_selected = batch_box_preds[target_idx][max_logit_idx].unsqueeze(0)
-        
-        # gt_boxes, gt_labels = torch.split(gt_boxes.squeeze(0), [7, 1], dim=1)
-        # iou_3d, assign_idx = assign_target_3d(box_selected, gt_boxes)
-        
-        # if self.verbose:
-        #     print(f"iou_3d: \t{iou_3d}")
-        #     print(f"max_logit: \t{max_logit}")
-        
-        # if ret_part_loss:
-        #     return -1.0 * torch.log(1 - max_logit), iou_3d
-        # else:
-        #     mesh_loss = -1.0 * torch.log(1 - max_logit) * iou_3d
-        
-        #     return mesh_loss
