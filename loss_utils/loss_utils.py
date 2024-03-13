@@ -10,16 +10,8 @@ from tqdm import tqdm
 from pathlib import Path
 import pdb
 
-
-from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d, assign_target_3d
+from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d
 from cudaext.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
-
-from pytorch3d.ops import sample_points_from_meshes, laplacian
-from pytorch3d.loss import mesh_laplacian_smoothing
-from pytorch3d.structures import Meshes, join_meshes_as_batch
-from pytorch3d.utils import ico_sphere
-from pytorch3d.transforms import Scale
-from pytorch3d.vis.plotly_vis import AxisArgs, plot_batch_individually, plot_scene
 
 class mesh_objectwise_loss(nn.Module):
     def __init__(self, freezed_iou: bool = False, normalized: bool = False, verbose: bool = False):
