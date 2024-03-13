@@ -182,6 +182,8 @@ class adversarial_patch_3d:
         self.base_coord: torch.Tensor = self.get_base_coord()
         print(f"mesh vertex count : {self.basic_mesh.verts_packed().size()}")
         
+        # self.deform_vert.grad = self.deform_vert.new_zeros(self.deform_vert.size())
+        
     def get_basic_mesh(self):
         return self.basic_mesh
         
@@ -289,7 +291,7 @@ class adv_dataset(DatasetTemplate):
         new_vert[:, :, 0] = new_vert[:, :, 0] * 0.7
         new_vert[:, :, 1] = new_vert[:, :, 1] * 0.7
         new_vert[:, :, 2] = new_vert[:, :, 2] * 0.5
-        new_vert[:, :, 0] = new_vert[:, :, 0] - 1.0
+        new_vert[:, :, 0] = new_vert[:, :, 0] - 0.2
         mSphere = mSphere.update_padded(new_vert)
         return mSphere
     
