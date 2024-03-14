@@ -1,5 +1,6 @@
 # dataset, log or cache
 eval_output/
+test_playground.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
