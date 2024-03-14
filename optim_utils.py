@@ -38,11 +38,11 @@ class objectwise_deepfool(nn.Module):
         pred_classes = cls_pred.argmax(dim=-1)
         target_idx_mask = (pred_classes != target_class_logit)
         
-        if target_idx_mask.any():
+        if target_idx_mask.all():
+            empty_flag = True
+        else:
             cls_pred[target_idx_mask, target_class_logit] = -1.0
             max_logit_idx = cls_pred[:, target_class_logit].argmax()
-        else:
-            empty_flag = True
 
         return max_logit_idx, empty_flag
 
@@ -96,7 +96,7 @@ class objectwise_deepfool(nn.Module):
             max_logit_idx, empty_flag = self.objectwise_assign(cls_pred = gt_cls_preds, 
                                  box_preds = gt_box_preds,
                                  target_class_logit = target_class_logit)
-            
+                        
             pert = torch.inf
             w = torch.zeros_like(deform_vert)
 
@@ -105,9 +105,11 @@ class objectwise_deepfool(nn.Module):
                 if deform_vert.grad is not None:
                     deform_vert.grad.zero_()
                 
-                target_logit = batch_cls_preds[max_logit_idx, target_class_logit]
+                target_logit = gt_cls_preds[max_logit_idx, target_class_logit]
                 target_logit.backward(retain_graph=True)
                 target_grad = deform_vert.grad.detach().clone()
+                
+                # print(f"gtbox_(\t{box_idx_mask})_(\t{max_logit_idx}): {gt_cls_preds[max_logit_idx]}")
                 
                 for i in range(logit_size):
                     self.model.zero_grad()
@@ -116,7 +118,7 @@ class objectwise_deepfool(nn.Module):
                     if i == target_class_logit:
                         continue
                     
-                    cur_logit = batch_cls_preds[max_logit_idx, i]
+                    cur_logit = gt_cls_preds[max_logit_idx, i]
                     cur_logit.backward(retain_graph=True)
                     cur_grad = deform_vert.grad.detach().clone()
                     
@@ -144,7 +146,15 @@ class objectwise_deepfool(nn.Module):
                     
                 iou_3d.backward(retain_graph=True)
                 iou_grad += deform_vert.grad
-
+                
+            else:
+                pass
+                # print(f"gtbox_({box_idx_mask}): EMPTY")
+            
+        # if deepfooled_grad.__len__() > 0:
+        #     deepfooled_grad = torch.stack(deepfooled_grad).mean(dim=0)
+        # else:
+        #     deepfooled_grad = torch.zeros_like(deform_vert)
         
         return deepfooled_grad, iou_grad
         
