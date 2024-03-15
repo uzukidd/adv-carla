@@ -28,6 +28,7 @@ class objectwise_deepfool(nn.Module):
         self.freezed_iou = freezed_iou
         self.normalized = normalized
         self.verbose = verbose
+        self.debug_msg = None
     
     @torch.no_grad()
     def objectwise_assign(self, cls_pred: torch.Tensor, box_preds: torch.Tensor, target_class_logit: int):
@@ -109,7 +110,7 @@ class objectwise_deepfool(nn.Module):
                 target_logit.backward(retain_graph=True)
                 target_grad = deform_vert.grad.detach().clone()
                 
-                # print(f"gtbox_(\t{box_idx_mask})_(\t{max_logit_idx}): {gt_cls_preds[max_logit_idx]}")
+                self.debug_msg = f"gtbox_(\t{box_idx_mask})_(\t{max_logit_idx}): {gt_cls_preds}"
                 
                 for i in range(logit_size):
                     self.model.zero_grad()
