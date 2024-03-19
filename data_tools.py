@@ -179,20 +179,50 @@ class adversarial_patch_3d:
     def __init__(self, basic_mesh):
         self.basic_mesh: Meshes = basic_mesh
         self.deform_vert: torch.Tensor = torch.zeros_like(basic_mesh.verts_packed(), requires_grad=True).cuda().contiguous()
+        self.deform_vert.requires_grad_(True)
+        
+        self.init_vert: torch.Tensor = basic_mesh.verts_packed().detach().clone()
         self.base_coord: torch.Tensor = self.get_base_coord()
+        
+        self.offset_limit: torch.Tensor = torch.tensor([0.1]).cuda()
+        self.global_translation: torch.Tensor = torch.tensor([0.0, 0.0, 0.0]).cuda()
+        self.global_translation.requires_grad_(True)
+        
+        self.scale: torch.Tensor = torch.tensor([0.7, 0.7, 0.5]).cuda()
+        self.theta: torch.Tensor = torch.tensor([0.0]).cuda()
+        self.theta.requires_grad_(True)
         print(f"mesh vertex count : {self.basic_mesh.verts_packed().size()}")
         
-        # self.deform_vert.grad = self.deform_vert.new_zeros(self.deform_vert.size())
+        
+    def generate_rotate_matrix(self) -> torch.Tensor:
+        tensor_0 = torch.zeros(1).cuda()
+        tensor_1 = torch.ones(1).cuda()
+        RZ = torch.stack([
+                torch.stack([torch.cos(self.theta), -torch.sin(self.theta), tensor_0]),
+                torch.stack([torch.sin(self.theta), torch.cos(self.theta), tensor_0]),
+                torch.stack([tensor_0, tensor_0, tensor_1])]).reshape(3,3)
+        # print(RZ)
+        return RZ
         
     def get_basic_mesh(self):
         return self.basic_mesh
         
     def get_deformed_mesh(self):
+        offset = self.scale[None, :] * \
+                    torch.sign(self.init_vert) * \
+                    torch.sigmoid(torch.abs(self.init_vert) + self.deform_vert) + \
+                    self.global_translation[None, :]
+        R = self.generate_rotate_matrix()
+        rotated_vert = torch.matmul(offset, R.T)
+        return self.basic_mesh.offset_verts(rotated_vert)
+    
+    def get_deformed_mesh_aux(self):
         return self.basic_mesh.offset_verts(self.deform_vert)
     
     def sample_points(self, sample_amount=50):
         deformed_mesh = self.get_deformed_mesh()
         pts_sampled = sample_points_from_meshes(deformed_mesh, sample_amount)
+        
         return pts_sampled
     
     def update_mesh(self, dst_vert):
@@ -207,7 +237,7 @@ class adversarial_patch_3d:
         return self.deform_vert
     
     def get_mesh_gradient(self):
-        return self.deform_vert.grad
+        return self.deform_vert.grad, self.global_translation.grad, self.theta.grad
     
     def clear_mesh_gradient(self):
         self.deform_vert.grad.zero_()
@@ -309,8 +339,6 @@ class adv_dataset(DatasetTemplate):
             extend_pts = pos_trans[i][None, :3] + adv_dataset.rotate_points(
                                                     pts, theta[i])
             extend_pts[:, 2] += pos_trans[i][None, 5] / 2.0
-            
-            # print(f"extend_pts:\t{extend_pts}")
             
             pts_set.append(extend_pts)
             
