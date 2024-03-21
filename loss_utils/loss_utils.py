@@ -13,6 +13,12 @@ import pdb
 from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d
 from cudaext.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
 
+def extended_sigmoid(input: torch.Tensor):
+    return 2.0 * torch.sigmoid(input) - 1.0
+
+def inverse_extended_sigmoid(input: torch.Tensor):
+    return torch.logit((input + 1.0)/2.0)
+
 class mesh_objectwise_loss(nn.Module):
     """
         loss from https://arxiv.org/abs/2101.10747
