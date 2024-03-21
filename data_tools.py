@@ -29,6 +29,8 @@ from pcdet.datasets import build_dataloader, DatasetTemplate
 from pcdet.models import build_network, load_data_to_gpu
 from pcdet.utils import common_utils
 
+from loss_utils import extended_sigmoid, inverse_extended_sigmoid
+
 ply_dtypes = dict([
     (b'char', 'i1'),
     (b'int8', 'i1'),
@@ -180,8 +182,7 @@ class adversarial_patch_3d:
         self.basic_mesh: Meshes = basic_mesh
         self.deform_vert: torch.Tensor = torch.zeros_like(basic_mesh.verts_packed(), requires_grad=True).cuda().contiguous()
         self.deform_vert.requires_grad_(True)
-        
-        self.init_vert: torch.Tensor = basic_mesh.verts_packed().detach().clone()
+    
         self.base_coord: torch.Tensor = self.get_base_coord()
         
         self.offset_limit: torch.Tensor = torch.tensor([0.1]).cuda()
@@ -191,6 +192,11 @@ class adversarial_patch_3d:
         self.scale: torch.Tensor = torch.tensor([0.7, 0.7, 0.5]).cuda()
         self.theta: torch.Tensor = torch.tensor([0.0]).cuda()
         self.theta.requires_grad_(True)
+        
+        self.init_vert_quadrant: torch.Tensor = torch.sign(basic_mesh.verts_packed()).detach().clone()
+        self.init_vert_logit: torch.Tensor = torch.logit(torch.abs(basic_mesh.verts_packed()/self.scale[None, :])).detach().clone()
+        print(torch.abs(basic_mesh.verts_packed()/self.scale[None, :]))
+        print(torch.logit(torch.abs(basic_mesh.verts_packed()/self.scale[None, :])))
         print(f"mesh vertex count : {self.basic_mesh.verts_packed().size()}")
         
         
@@ -208,13 +214,13 @@ class adversarial_patch_3d:
         return self.basic_mesh
         
     def get_deformed_mesh(self):
-        offset = self.scale[None, :] * \
-                    torch.sign(self.init_vert) * \
-                    torch.sigmoid(torch.abs(self.init_vert) + self.deform_vert) + \
-                    self.global_translation[None, :]
+        offset = self.scale[None, :] \
+                    * self.init_vert_quadrant \
+                    * torch.sigmoid(self.init_vert_logit + self.deform_vert) \
+                    + (self.offset_limit * torch.tanh(self.global_translation/self.offset_limit))[None, :]
         R = self.generate_rotate_matrix()
         rotated_vert = torch.matmul(offset, R.T)
-        return self.basic_mesh.offset_verts(rotated_vert)
+        return self.basic_mesh.update_padded(rotated_vert.unsqueeze(0))
     
     def get_deformed_mesh_aux(self):
         return self.basic_mesh.offset_verts(self.deform_vert)
@@ -244,7 +250,7 @@ class adversarial_patch_3d:
     
     def get_base_coord(self):
         base_z = self.basic_mesh.verts_packed()[:, 2].min()
-        return self.deform_vert.new_tensor([0.0, 0.0, base_z], requires_grad=False)
+        return self.deform_vert.new_tensor([0.2, 0.0, base_z], requires_grad=False)
     
 class adv_dataset(DatasetTemplate):
     def __init__(self, parent_dataset, sample_amount = 50, surrogate_model = None, target_class = 1):
@@ -321,7 +327,7 @@ class adv_dataset(DatasetTemplate):
         new_vert[:, :, 0] = new_vert[:, :, 0] * 0.7
         new_vert[:, :, 1] = new_vert[:, :, 1] * 0.7
         new_vert[:, :, 2] = new_vert[:, :, 2] * 0.5
-        new_vert[:, :, 0] = new_vert[:, :, 0] - 0.2
+        # new_vert[:, :, 0] = new_vert[:, :, 0] - 0.2
         mSphere = mSphere.update_padded(new_vert)
         return mSphere
     
