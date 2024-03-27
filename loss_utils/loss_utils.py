@@ -160,7 +160,12 @@ class relevant_bounding_box_loss(nn.Module):
         return iou3d
         
         
-    def forward(self, batch_dict, point_coords, gt_boxes: torch.Tensor, target_class: int, reduction:str = 'max', ret_part_loss: bool = False):
+    def forward(self, batch_dict, 
+                point_coords, 
+                gt_boxes: torch.Tensor, 
+                target_class: int, 
+                logit_normal:str = 'sigmoid', 
+                ret_part_loss: bool = False):
         """
 
         Args:
@@ -188,7 +193,12 @@ class relevant_bounding_box_loss(nn.Module):
         
         # assign 
         # batch_cls_preds_normalized = F.softmax(batch_cls_preds, dim=1) # [N, 3]
-        batch_cls_preds_normalized = torch.sigmoid(batch_cls_preds) # [N, 3]
+        if logit_normal == "sigmoid":
+            batch_cls_preds_normalized = torch.sigmoid(batch_cls_preds) # [N, 3]
+        elif logit_normal == "softmax":
+            batch_cls_preds_normalized = F.softmax(batch_cls_preds, dim=1) # [N, 3]
+        else:
+            raise NotImplementedError
         confidence_mask = (batch_cls_preds_normalized[:, target_class_logit] > self.confidence_threshold)
         
         masked_cls_preds = batch_cls_preds_normalized[confidence_mask]
@@ -225,7 +235,107 @@ class relevant_bounding_box_loss(nn.Module):
         #     print(total_loss.size())
 
         
+class relevant_refine_head_loss(nn.Module):
+    """
+        loss from https://arxiv.org/abs/2004.00543
+    """
+    def __init__(self, frozen_iou: bool = False,
+                 frozen_logit: bool = False,
+                 confidence_threshold: float = 0.1,
+                 iou_threshold: float = 0.1, 
+                 verbose: bool = False):
+        super().__init__()
+        self.frozen_iou = frozen_iou
+        self.frozen_logit = frozen_logit
+        self.confidence_threshold = confidence_threshold
+        self.iou_threshold = iou_threshold
+        self.verbose = verbose
+        
+    def iou3d(self, batch_box_preds:torch.Tensor, 
+                    gt_boxes: torch.Tensor):
+        """
+            Args:
+            - batch_box_preds: [M, 7]
+            - gt_boxes: [N, 7]
+            
+            Return:
+            - iou3d: [M, N]
+        """
+        M = batch_box_preds.size(0)
+        N = gt_boxes.size(0)
+
+        box3d_roi_extended = batch_box_preds.view(M, 1, 7).expand(-1, N, -1)
+        box3d_gt_extended = gt_boxes.view(1, N, 7).expand(M, -1, -1)
+        # iou3d [M, N]
+        iou3d = cal_iou_3d(box3d_roi_extended, box3d_gt_extended)
+        
+        return iou3d
         
         
+    def forward(self, batch_dict,  
+                gt_boxes: torch.Tensor, 
+                target_class: int, 
+                logit_normal:str = 'sigmoid', 
+                ret_part_loss: bool = False):
+        """
+
+        Args:
+        - batch_cls_preds: [N, 3]
+        - batch_box_preds: [N, 7]
+        - gt_boxes: [1, N, 8]
+        - ret_part_loss: bool
+
+        Returns:
+        - iou_3d: 
+        - assign_idx: 
+        - mesh_loss:
+        """
+        batch_cls_preds:torch.Tensor = batch_dict["batch_cls_preds"] # [N, 3]
+        batch_box_preds:torch.Tensor = batch_dict["batch_box_preds"] # [N, 7]
         
+        gt_boxes, gt_labels = torch.split(gt_boxes.squeeze(dim=0), [7, 1], dim=1)  # [N, 7], [N, 1]
+        gt_boxes = gt_boxes[gt_labels[:, 0] == target_class]
+        gt_labels = gt_labels[gt_labels[:, 0] == target_class]
         
+        target_class_logit = target_class - 1
+
+        assert gt_boxes.size(0), "at leaset one gt box exists."
+        
+        # assign 
+        if logit_normal == "sigmoid":
+            batch_cls_preds_normalized = torch.sigmoid(batch_cls_preds) # [N, 3]
+        elif logit_normal == "softmax":
+            batch_cls_preds_normalized = F.softmax(batch_cls_preds, dim=1) # [N, 3]
+        else:
+            raise NotImplementedError
+        confidence_mask = (batch_cls_preds_normalized[:, target_class_logit] > self.confidence_threshold)
+        
+        masked_cls_preds = batch_cls_preds_normalized[confidence_mask]
+        masked_box_preds = batch_box_preds[confidence_mask]
+        
+        iou3d = self.iou3d(masked_box_preds, gt_boxes)
+        
+        masked_cls_preds_extended = masked_cls_preds.unsqueeze(dim=1)
+        masked_cls_preds_extended = masked_cls_preds_extended.expand(-1, iou3d.size(1), -1)
+        masked_cls_preds_extended = masked_cls_preds_extended.contiguous().view(-1, masked_cls_preds.size(1))
+        
+        masked_box_preds_extended = masked_box_preds.unsqueeze(dim=1)
+        masked_box_preds_extended = masked_box_preds_extended.expand(-1, iou3d.size(1), -1)
+        masked_box_preds_extended = masked_box_preds_extended.contiguous().view(-1, masked_box_preds.size(1))
+        
+        iou3d = iou3d.view(-1)
+        if self.frozen_iou:
+            iou3d = iou3d.detach()
+            
+        if self.frozen_logit:
+            masked_cls_preds_extended = masked_cls_preds_extended.detach()
+        
+        iou_mask = (iou3d > self.iou_threshold)
+        iou3d = iou3d[iou_mask]
+        masked_cls_preds_extended = masked_cls_preds_extended[iou_mask]
+        masked_box_preds_extended = masked_box_preds_extended[iou_mask]
+        
+        total_loss = -1.0 * torch.log(1.0 - masked_cls_preds_extended[:, target_class_logit]) * iou3d
+        total_loss = total_loss.sum()
+        
+        return total_loss
