@@ -248,12 +248,19 @@ class adversarial_patch_3d:
     def clear_mesh_gradient(self):
         self.deform_vert.grad.zero_()
     
-    def get_base_coord(self):
+    def get_base_coord(self, need_naive_rooftop_approxiamte:bool=True):
         base_z = self.basic_mesh.verts_packed()[:, 2].min()
-        return self.deform_vert.new_tensor([0.2, 0.0, base_z], requires_grad=False)
+        if need_naive_rooftop_approxiamte:
+            return self.deform_vert.new_tensor([0.2, 0.0, base_z], requires_grad=False)
+        else:
+            return self.deform_vert.new_tensor([0.0, 0.0, base_z], requires_grad=False)
     
 class adv_dataset(DatasetTemplate):
-    def __init__(self, parent_dataset, sample_amount = 50, surrogate_model = None, target_class = 1):
+    def __init__(self, parent_dataset, 
+                 sample_amount = 50, 
+                 surrogate_model = None, 
+                 rooftop_approximate: list[np.ndarray] = None,
+                 target_class = 1):
         """
         Args:
             parent_dataset:
@@ -268,9 +275,17 @@ class adv_dataset(DatasetTemplate):
         self.target_class = target_class # 0 for background
         self.surrogate_model = surrogate_model
         self.sample_amount = sample_amount
+        self.rooftop_approximate = rooftop_approximate
         
         if self.logger is not None:
             self.logger.info('Total samples for dataset: %d' % (len(self)))
+            
+        if self.rooftop_approximate is not None:
+            rooftop_size = 0
+            for i in self.rooftop_approximate:
+                rooftop_size += i.__len__()
+                
+            self.logger.info('Successfully loaded rooftop appromximation: %d' % (rooftop_size))
             
         self.universal_adv_patch = adversarial_patch_3d(basic_mesh=self.generate_basic_mesh(
             level=2,
@@ -283,6 +298,7 @@ class adv_dataset(DatasetTemplate):
     def __getitem__(self, index):
         batch_dict = self.parent_dataset.__getitem__(index)
         batch_dict = kitti_carla_dataset.collate_batch([batch_dict])
+        batch_dict["idx"] = index
         load_data_to_gpu(batch_dict)
         
         if self.enabled_adversarial_patch:
@@ -294,8 +310,14 @@ class adv_dataset(DatasetTemplate):
         self.enabled_adversarial_patch = enable
     
     def prepare_adversarial_data(self, data_dict):
+        idx = data_dict["idx"]
+        rooftop_approximate = None
         pos_trans = None
         theta = None
+        
+        if self.rooftop_approximate is not None:
+            rooftop_approximate = self.rooftop_approximate[idx]
+        
         if self.surrogate_model is not None:
             pred_dicts = None
             surrogate_dict = deepcopy(data_dict)
@@ -315,7 +337,10 @@ class adv_dataset(DatasetTemplate):
         theta = theta[gt_labels[:, 0] == self.target_class]
         data_dict["points"] = self.attach_adv_patch_scene(data_dict["points"][:, 1:4], 
                                                         self.universal_adv_patch,
-                                                        pos_trans, theta, self.sample_amount)
+                                                        pos_trans, 
+                                                        theta, 
+                                                        rooftop_approximate,
+                                                        self.sample_amount)
         data_dict["points"] = F.pad(data_dict["points"], (1, 1), "constant", 0)
         return data_dict
     
@@ -332,7 +357,11 @@ class adv_dataset(DatasetTemplate):
         return mSphere
     
     @staticmethod
-    def attach_adv_patch_scene(points, adv_patch:adversarial_patch_3d, pos_trans, theta, sample_amount = 50):
+    def attach_adv_patch_scene(points, adv_patch:adversarial_patch_3d, 
+                               pos_trans, 
+                               theta, 
+                               rooftop_approximate: list[np.ndarray] = None,
+                               sample_amount = 50):
         pts_set = [points]
         
         if pos_trans is None:
@@ -341,12 +370,20 @@ class adv_dataset(DatasetTemplate):
         n = pos_trans.__len__()
         
         for i in range(n):
-            pts = adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3) - adv_patch.base_coord
-            extend_pts = pos_trans[i][None, :3] + adv_dataset.rotate_points(
-                                                    pts, theta[i])
-            extend_pts[:, 2] += pos_trans[i][None, 5] / 2.0
-            
-            pts_set.append(extend_pts)
+            extend_pts = None
+            if rooftop_approximate is None:
+                pts = adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3) - adv_patch.get_base_coord(True)
+                extend_pts = pos_trans[i][None, :3] + adv_dataset.rotate_points(
+                                                        pts, theta[i])
+                extend_pts[:, 2] += pos_trans[i][None, 5] / 2.0
+            elif rooftop_approximate[i] is not None:
+                # print(torch.from_numpy(rooftop_approximate[i])[None, :3].float().cuda().size())
+                # print(adv_dataset.rotate_points(pts, theta[i]).size())
+                pts = adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3) - adv_patch.get_base_coord(False)
+                extend_pts = torch.from_numpy(rooftop_approximate[i])[None, :3].float().cuda() + adv_dataset.rotate_points(
+                                                        pts, theta[i])
+            if extend_pts is not None:
+                pts_set.append(extend_pts)
             
         return torch.concatenate(pts_set)
     
