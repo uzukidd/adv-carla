@@ -15,6 +15,8 @@ from pytorch3d.utils import ico_sphere
 from pytorch3d.transforms import Scale
 from pytorch3d.vis.plotly_vis import AxisArgs, plot_batch_individually, plot_scene
 
+from cudaext.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
+
 try:
     import open3d
     from visual_utils import open3d_vis_utils as V
@@ -288,9 +290,9 @@ class adv_dataset(DatasetTemplate):
             self.logger.info('Successfully loaded rooftop appromximation: %d' % (rooftop_size))
             
         self.universal_adv_patch = adversarial_patch_3d(basic_mesh=self.generate_basic_mesh(
-            level=2,
-            scale=0.8).cuda())
+            level=2).cuda())
         
+        # self.logger.info(f"ground truth boxes statistic: {self.get_gt_boxes_statistic_info()}")
 
     def __len__(self):
         return len(self.parent_dataset)
@@ -301,88 +303,136 @@ class adv_dataset(DatasetTemplate):
         batch_dict["idx"] = index
         load_data_to_gpu(batch_dict)
         
+        rooftop_approximate = None
+        if self.rooftop_approximate is not None:
+            rooftop_approximate = self.rooftop_approximate[index]
+        
+        batch_dict = self.prepare_gtbox(batch_dict,
+            rooftop_approximate)
+        
         if self.enabled_adversarial_patch:
             batch_dict=self.prepare_adversarial_data(batch_dict)
         
         return batch_dict
     
+    def get_gt_boxes_statistic_info(self):
+        res = np.array((0, 0, 0, 0))
+        for batch_dict in self.parent_dataset:
+            classes, counts = np.unique(batch_dict['gt_boxes'][:, 7], return_counts=True)
+            for idx, count in zip(classes.astype(np.int64), counts):
+                res[idx] += count
+        
+        return res
+    
     def enable_adversarial_patch(self, enable):
         self.enabled_adversarial_patch = enable
-    
-    def prepare_adversarial_data(self, data_dict):
-        idx = data_dict["idx"]
-        rooftop_approximate = None
-        pos_trans = None
-        theta = None
         
-        if self.rooftop_approximate is not None:
-            rooftop_approximate = self.rooftop_approximate[idx]
+    def prepare_adversarial_data(self, batch_dict):
+        _, theta, _ = torch.split(batch_dict['gt_boxes'].squeeze(0), [6, 1, 1], dim=1)
         
-        if self.surrogate_model is not None:
-            pred_dicts = None
-            surrogate_dict = deepcopy(data_dict)
-            with torch.no_grad() :
-                self.surrogate_model.eval()
-                pred_dicts, _ = self.surrogate_model.forward(surrogate_dict)
-                gts = pred_dicts[0]['pred_boxes'].detach().clone()
-                gt_classes = pred_dicts[0]['pred_labels'].detach().clone()
-                gts = torch.concatenate([gts, gt_classes.view(-1, 1)], axis=1)
-                data_dict['gt_boxes'] = gts.view(1, -1, 8)
-            
-        elif data_dict.get('gt_boxes', None) is not None:
-            pass
-        
-        pos_trans, theta, gt_labels = torch.split(data_dict['gt_boxes'].squeeze(0), [6, 1, 1], dim=1)
-        pos_trans = pos_trans[gt_labels[:, 0] == self.target_class]
-        theta = theta[gt_labels[:, 0] == self.target_class]
-        data_dict["points"] = self.attach_adv_patch_scene(data_dict["points"][:, 1:4], 
+        batch_dict["points"] = self.attach_adv_patch_scene(batch_dict["points"][:, 1:4], 
                                                         self.universal_adv_patch,
-                                                        pos_trans, 
                                                         theta, 
-                                                        rooftop_approximate,
+                                                        batch_dict["rooftop_approximate"],
                                                         self.sample_amount)
-        data_dict["points"] = F.pad(data_dict["points"], (1, 1), "constant", 0)
-        return data_dict
+        batch_dict["points"] = F.pad(batch_dict["points"], (1, 1), "constant", 0)
+        return batch_dict
+    
+    
+    # def prepare_adversarial_data(self, data_dict):
+    #     idx = data_dict["idx"]
+    #     rooftop_approximate = None
+    #     pos_trans = None
+    #     theta = None
+        
+    #     if self.rooftop_approximate is not None:
+    #         rooftop_approximate = self.rooftop_approximate[idx]
+        
+    #     if self.surrogate_model is not None:
+    #         pred_dicts = None
+    #         surrogate_dict = deepcopy(data_dict)
+    #         with torch.no_grad():
+    #             self.surrogate_model.eval()
+    #             pred_dicts, _ = self.surrogate_model.forward(surrogate_dict)
+    #             gts = pred_dicts[0]['pred_boxes'].detach().clone()
+    #             gt_classes = pred_dicts[0]['pred_labels'].detach().clone()
+    #             gts = torch.concatenate([gts, gt_classes.view(-1, 1)], axis=1)
+    #             data_dict['gt_boxes'] = gts.view(1, -1, 8)
+            
+    #     elif data_dict.get('gt_boxes', None) is not None:
+    #         pass
+        
+    #     if self.rooftop_approximate is not None:            
+    #         print(data_dict['gt_boxes'].size())
+    #         print(rooftop_approximate.shape)
+    #     else:
+    #         data_dict['gt_boxes'] = self.prepare_gtbox(data_dict['gt_boxes'], 
+    #                         data_dict["points"])
+            
+    #         pos_trans, theta, gt_labels = torch.split(data_dict['gt_boxes'].squeeze(0), [6, 1, 1], dim=1)
+    #         pos_trans = pos_trans[gt_labels[:, 0] == self.target_class]
+    #         theta = theta[gt_labels[:, 0] == self.target_class]
+    #         data_dict["points"] = self.attach_adv_patch_scene(data_dict["points"][:, 1:4], 
+    #                                                         self.universal_adv_patch,
+    #                                                         pos_trans, 
+    #                                                         theta, 
+    #                                                         rooftop_approximate,
+    #                                                         self.sample_amount)
+    #         data_dict["points"] = F.pad(data_dict["points"], (1, 1), "constant", 0)
+    #     return data_dict
+    
+    def prepare_gtbox(self, batch_dict,
+                      rooftop_approximate: list[np.ndarray]):
+        """
+            gt_boxes: [1, N, 8]
+            points: [M, 5]
+        """
+        gt_boxes: torch.Tensor = batch_dict['gt_boxes']
+        
+        classes_mask = (self.target_class == gt_boxes[:, :, 7].view(-1))
+        gt_boxes = gt_boxes[:, classes_mask]
+        
+        vaild_mask = [item is not None for item in rooftop_approximate]
+        gt_boxes = gt_boxes[:, vaild_mask]
+        if gt_boxes.size(1) != 0:
+            temp = []
+            for i in range(rooftop_approximate.__len__()):
+                if rooftop_approximate[i] is not None:
+                    temp.append(rooftop_approximate[i])
+            rooftop_approximate = np.stack(temp)
+        else:
+            rooftop_approximate = None
+            
+        batch_dict['gt_boxes'] = gt_boxes
+        batch_dict['rooftop_approximate'] = rooftop_approximate
+
+        return batch_dict
     
     @staticmethod
-    def generate_basic_mesh(level:int = 0, scale:float = 0.5):
+    def generate_basic_mesh(level:int = 0, eps = 0.0):
         mSphere = ico_sphere(level)
         # new_verts = mSphere.verts_padded() * scale
         new_vert = mSphere.verts_padded()
-        new_vert[:, :, 0] = new_vert[:, :, 0] * 0.7
-        new_vert[:, :, 1] = new_vert[:, :, 1] * 0.7
-        new_vert[:, :, 2] = new_vert[:, :, 2] * 0.5
+        new_vert[:, :, 0] = new_vert[:, :, 0] * 0.7 * (1 - eps)
+        new_vert[:, :, 1] = new_vert[:, :, 1] * 0.7 * (1 - eps)
+        new_vert[:, :, 2] = new_vert[:, :, 2] * 0.5 * (1 - eps)
         # new_vert[:, :, 0] = new_vert[:, :, 0] - 0.2
         mSphere = mSphere.update_padded(new_vert)
         return mSphere
     
     @staticmethod
     def attach_adv_patch_scene(points, adv_patch:adversarial_patch_3d, 
-                               pos_trans, 
                                theta, 
-                               rooftop_approximate: list[np.ndarray] = None,
+                               rooftop_approximate: np.ndarray = None,
                                sample_amount = 50):
         pts_set = [points]
         
-        if pos_trans is None:
-            return torch.concatenate(pts_set)
-        
-        n = pos_trans.__len__()
-        
-        for i in range(n):
-            extend_pts = None
-            if rooftop_approximate is None:
-                pts = adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3) - adv_patch.get_base_coord(True)
-                extend_pts = pos_trans[i][None, :3] + adv_dataset.rotate_points(
-                                                        pts, theta[i])
-                extend_pts[:, 2] += pos_trans[i][None, 5] / 2.0
-            elif rooftop_approximate[i] is not None:
-                # print(torch.from_numpy(rooftop_approximate[i])[None, :3].float().cuda().size())
-                # print(adv_dataset.rotate_points(pts, theta[i]).size())
+        if rooftop_approximate is not None:
+            n = rooftop_approximate.shape[0]
+            for i in range(n):
                 pts = adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3) - adv_patch.get_base_coord(False)
                 extend_pts = torch.from_numpy(rooftop_approximate[i])[None, :3].float().cuda() + adv_dataset.rotate_points(
                                                         pts, theta[i])
-            if extend_pts is not None:
                 pts_set.append(extend_pts)
             
         return torch.concatenate(pts_set)
