@@ -5,12 +5,12 @@ POINT_CLOUD_RANGE: [0, -40, -3, 70.4, 40, 1]
 
 DATA_SPLIT: {
     'train': train,
-    'test': val
+    'test': train
 }
 
 INFO_PATH: {
-    'train': [/home/ksas/Public/datasets/KITTI/kitti_infos_train.pkl],
-    'test': [/home/ksas/Public/datasets/KITTI/kitti_infos_val.pkl],
+    'train': [/home/ksas/Public/datasets/KITTI/kitti_infos_trainval.pkl],
+    'test': [/home/ksas/Public/datasets/KITTI/kitti_infos_trainval.pkl],
 }
 
 GET_ITEM_LIST: ["points"]
