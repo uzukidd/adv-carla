@@ -287,7 +287,10 @@ if __name__ == "__main__":
             dataset_cfg=cfg.DATA_CONFIG,
             class_names=cfg.CLASS_NAMES,
             batch_size=args.BATCH_SIZE,
-            dist=args.DIST_TEST, workers=args.WORKERS, logger=logger, training=False
+            dist=args.DIST_TEST,
+            workers=args.WORKERS,
+            logger=logger,
+            training=False
         )
     
     logger.info(f'Class names of samples: \t{test_set.class_names}')
