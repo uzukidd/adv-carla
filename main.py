@@ -34,8 +34,9 @@ from eval_utils import eval_utils
 from loss_utils import mesh_objectwise_loss, relevant_bounding_box_loss
 from optim_utils import objectwise_deepfool
 
-
+import pdb
 import argparse
+import os
 
 
 def roipooling_grad_mapping(pooled_features_grad, batch_point_features, pooled_pts_idx):
@@ -57,78 +58,110 @@ def roipooling_grad_mapping(pooled_features_grad, batch_point_features, pooled_p
     
     return xyz_features_grad, batch_point_features_grad
 
+def gtbox_wise_cos_compute(mesh_proposal_loss:torch.Tensor, 
+                           gtbox_idx:torch.Tensor,
+                           gtbox_size:int,
+                           optimizer,
+                           universal_adv_patch):
+    grad_list = []
+    for idx in range(gtbox_size):
+        gtbox_mask = (gtbox_idx == idx)
+        masked_loss = mesh_proposal_loss[gtbox_mask]
+        optimizer.zero_grad()
+        masked_loss.sum().backward(retain_graph = True)
+        grad_list.append(universal_adv_patch.get_mesh_gradient())
+    
+    # for i in range(gtbox_size):
+    #     for j in range(gtbox_size - i - 1):
+            
+    # pdb.set_trace()
 
-def evaluate_one_epoch_attack(args, enable_adv, update, visualize, verbose_epoch: int = 100):
-    mesh_loss_scaler = []
-    regular_loss_scaler = []
+
+def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
+                              verbose_epoch: int = 100,
+                              grad_cache = None):
     kitti_adv_dataset.enable_adversarial_patch(enable_adv)
     
     for i, batch_dict in tqdm(enumerate(kitti_adv_dataset), total=kitti_adv_dataset.__len__()):
-        # batch_dict = kitti_adv_dataset.__getitem__(1)
         load_data_to_gpu(batch_dict)
 
+        if not torch.eq(batch_dict['gt_boxes'][0, :, 7], 1).any():
+            # logger.info(f"no vehicles found in batch \t{i}")
+            continue
+        
         model.eval()
         model.zero_grad()
         pred_dicts, _ = model(batch_dict)
         point_headbox_ret_dict = point_headbox.forward_ret_dict
         pointrcnn_head_ret_dict = pointrcnn_head.forward_ret_dict
+        
+        if args.CHECK_GRAD_QUAD:
+            n_size = batch_dict["gt_boxes"].size(1)
+            grad_cache.append([])
+            for n_idx_mask in range(n_size):
+                mesh_proposal_loss:torch.Tensor = rbbox_loss_func(batch_dict = point_headbox_ret_dict, 
+                                        gt_boxes = batch_dict["gt_boxes"][:, n_idx_mask:n_idx_mask+1, :], 
+                                        target_class = 1,
+                                        logit_normal = "sigmoid",
+                                        ret_part_loss = False)
 
-        if not torch.eq(batch_dict['gt_boxes'][0, :, 7], 1).any():
-            # logger.info(f"no vehicles found in batch \t{i}")
-            continue
+                optimizer.zero_grad()
+                model.zero_grad()
+                if mesh_proposal_loss.requires_grad:
+                    mesh_proposal_loss.backward(retain_graph = True)
+                    grad_cache[-1].append([grad.cpu().numpy() for grad in kitti_adv_dataset.universal_adv_patch.get_mesh_gradient()])
             
-        if args.OPTIM == "meshloss":
-            mesh_loss = criterion(batch_dict = point_headbox_ret_dict, 
-                                    point_coords = batch_dict["point_coords"][:, 1:4].squeeze(dim=0),
-                                    gt_boxes = batch_dict["gt_boxes"], 
-                                    target_class = 1,
-                                    ret_part_loss = False)
-            regular_loss = kitti_adv_dataset.universal_adv_patch.get_laplacian_loss()
-            total_loss = mesh_loss + args.laplacian_weights * regular_loss
-            
-            optimizer.zero_grad()
-            total_loss.backward()
-            
-            mesh_loss_scaler.append(mesh_loss.item())
-            regular_loss_scaler.append(regular_loss.item())
-            
-            assert not torch.isnan(mesh_loss), "mesh loss is NaN"
-            
-        elif args.OPTIM == "deepfool":
-            deepfooled_grad, iou_grad = deepfool_perturbate(batch_dict = point_headbox_ret_dict, 
-                    point_coords = batch_dict["point_coords"][:, 1:4].squeeze(dim=0),
-                    deform_vert = kitti_adv_dataset.universal_adv_patch.get_mesh_deform_vert(),
-                    gt_boxes = batch_dict["gt_boxes"], 
-                    target_class = 1)
-            model.zero_grad()
-            if kitti_adv_dataset.universal_adv_patch.get_mesh_gradient() is not None:
-                kitti_adv_dataset.universal_adv_patch.get_mesh_gradient().zero_()
-            
-            regular_loss = kitti_adv_dataset.universal_adv_patch.get_laplacian_loss()
-            regular_loss.backward()
-            
-            regular_grad = kitti_adv_dataset.universal_adv_patch.get_mesh_deform_vert().grad.detach().clone()
-            kitti_adv_dataset.universal_adv_patch.get_mesh_deform_vert().grad = -(1 + args.overshoot) * deepfooled_grad
-        elif args.OPTIM == "rbboxloss":
-            mesh_loss = rbbox_loss_func(batch_dict = point_headbox_ret_dict, 
-                                    point_coords = batch_dict["point_coords"][:, 1:4].squeeze(dim=0),
+        if args.OPTIM == "rbboxloss":
+            mesh_proposal_loss = rbbox_loss_func(batch_dict = point_headbox_ret_dict, 
                                     gt_boxes = batch_dict["gt_boxes"], 
                                     target_class = 1,
                                     logit_normal = "sigmoid",
                                     ret_part_loss = False)
             
-            regular_loss = kitti_adv_dataset.universal_adv_patch.get_laplacian_loss()
-            total_loss = mesh_loss + args.laplacian_weights * regular_loss
+            # mesh_proposal_loss, gtbox_idx, gtbox_size = rbbox_loss_func(batch_dict = point_headbox_ret_dict, 
+            #                         gt_boxes = batch_dict["gt_boxes"], 
+            #                         target_class = 1,
+            #                         logit_normal = "sigmoid",
+            #                         return_gtbox_id = True,
+            #                         ret_part_loss = False)
             
+            # mesh_head_loss = rbbox_loss_func(batch_dict = pointrcnn_head_ret_dict, 
+            #                         gt_boxes = batch_dict["gt_boxes"], 
+            #                         target_class = 1,
+            #                         logit_normal = "sigmoid",
+            #                         input_type = 'roihead',
+            #                         ret_part_loss = False)
+            
+            # gtbox_wise_cos_compute(mesh_proposal_loss = mesh_proposal_loss, 
+            #                gtbox_idx = gtbox_idx,
+            #                gtbox_size = gtbox_size,
+            #                optimizer = optimizer,
+            #                universal_adv_patch = kitti_adv_dataset.universal_adv_patch)
+            
+            # if mesh_proposal_loss.size(0) != 1:
+            # mesh_proposal_loss = mesh_proposal_loss.sum()
+                
+            regular_loss = kitti_adv_dataset.universal_adv_patch.get_laplacian_loss()
+            # total_loss = mesh_proposal_loss + roi_head_weights * mesh_head_loss + laplacian_weights * regular_loss
+            total_loss = mesh_proposal_loss + args.laplacian_weights * regular_loss
+
             optimizer.zero_grad()
+            model.zero_grad()
             total_loss.backward()
+            # if pointrcnn_head.pooled_features.grad is not None:
+            #     xyz_features_grad, batch_point_features_grad = roipooling_grad_mapping(pointrcnn_head.pooled_features.grad, 
+            #                                                                         pointrcnn_head.batch_point_features, 
+            #                                                                         pointrcnn_head.pooled_pts_idx)
+            #     pointrcnn_head.batch_point_features.backward(batch_point_features_grad, retain_graph = True)
+            #     batch_dict['points'][None, :, 1:4].backward(xyz_features_grad, retain_graph = True)
+            
         else:
             raise NotImplementedError
         
         if verbose_epoch > 0 and i % verbose_epoch == 0:
             logger.info(f"deformed verts of mesh: \t{kitti_adv_dataset.universal_adv_patch.get_mesh_deform_vert()}")
-            logger.info(f"deformed verts of mesh: \t{kitti_adv_dataset.universal_adv_patch.get_mesh_gradient()}")
-            # print(deepfool_perturbate.debug_msg)
+            logger.info(f"deformed vert gradients of mesh: \t{kitti_adv_dataset.universal_adv_patch.get_mesh_gradient()}")
+
             if visualize:
                 fig = plot_scene({
                     "original": {
@@ -154,22 +187,12 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize, verbose_epoch
             vert_grad[:, 2] = 0.
             translate_grad[2] = 0.
             
-            if args.OPTIM == "meshloss":
+            if args.OPTIM == "rbboxloss":
                 optimizer.step()
-            elif args.OPTIM == "rbboxloss":
-                optimizer.step()
-            elif args.OPTIM == "deepfool":
-                new_vert = kitti_adv_dataset.universal_adv_patch.get_mesh_deform_vert() - kitti_adv_dataset.universal_adv_patch.get_mesh_gradient()
-                kitti_adv_dataset.universal_adv_patch.update_mesh(new_vert)
             else:
                 raise NotImplementedError
             
-            """
-                limit distortion into [-0.1m, 0.1m]
-            """
-            vert = kitti_adv_dataset.universal_adv_patch.get_mesh_deform_vert()
-            with torch.no_grad():
-                vert[:] = vert.clamp(min=-0.1, max=0.1)
+        return grad_cache
             
 
 def vis_adv_examples(kitti_adv_dataset):
@@ -184,9 +207,14 @@ def vis_adv_examples(kitti_adv_dataset):
     fig.update_layout(height=400, width=800)
     fig.show()
 
-    logger.info(f"deformed verts of mesh: \t{kitti_adv_dataset.universal_adv_patch.get_mesh_deform_vert()}")
-    logger.info(f"theta of mesh: \t{kitti_adv_dataset.universal_adv_patch.theta}")
-    logger.info(f"theta of global_translation: \t{kitti_adv_dataset.universal_adv_patch.global_translation}")
+    # logger.info(f"deformed verts of mesh: \t{kitti_adv_dataset.universal_adv_patch.get_mesh_deform_vert()}")
+    # logger.info(f"theta of mesh: \t{kitti_adv_dataset.universal_adv_patch.theta}")
+    # logger.info(f"theta of global_translation: \t{kitti_adv_dataset.universal_adv_patch.global_translation}")
+
+
+def save_grad_cache(grad_cache):
+    with open("./check_grad.pkl", "wb") as output:
+        pkl.dump(grad_cache, output)
 
 
 def whether_eval_init_patch(args, cfg, model, kitti_adv_dataset, logger):
@@ -194,11 +222,16 @@ def whether_eval_init_patch(args, cfg, model, kitti_adv_dataset, logger):
         logger.info("Evaluate the initial patch")
         kitti_adv_dataset.enable_adversarial_patch(True)
         eval_utils.eval_one_epoch(
-                cfg, None, model, kitti_adv_dataset, 0, logger, dist_test=args.DIST_TEST,
-                result_dir=Path(args.EVAL_OUTPUT_DIR)
-                , infer_time=True
+                cfg,
+                agrs = None,
+                model = model,
+                dataloader = kitti_adv_dataset,
+                epoch_id = 0,
+                logger = logger,
+                dist_test = args.DIST_TEST,
+                result_dir = Path(args.EVAL_OUTPUT_DIR),
+                infer_time = True
             )
-
         return True
     else:
         logger.info("Skip the evaluation of initial patch")
@@ -225,7 +258,7 @@ def load_annotated_rooftop(ROOFTOP_ANNOTATE, logger):
     except TypeError as error:
         logger.info(error.__str__())
     
-    logger.info(f"rooftop_approximate: {rooftop_approximate}")
+    # logger.info(f"rooftop_approximate: {rooftop_approximate}")
 
     return rooftop_approximate
     
@@ -247,14 +280,21 @@ def parse_config():
     args.add_argument('--DIST_TEST', type=bool, default=False, help='distributed test')
     args.add_argument('--OPTIM', type=str, default="rbboxloss", help='optimization method')
     args.add_argument('--EVAL_INIT_PATH', type=bool, default=False, help='evaluation initial path')
+    args.add_argument('--CHECK_GRAD_QUAD', type=bool, default=False, help='check grad quad')
+    args.add_argument('--roi_head_weights', type=float, default=1.0, help='roi head weights')
     args.add_argument('--laplacian_weights', type=float, default=0.001, help='laplacian weights')
     args.add_argument('--learning_rate', type=float, default=0.005, help='learning rate')
-    args.add_argument('--overshoot', type=float, default=0.02, help='overshoot')
 
     args = args.parse_args()
 
     ### Load the configuration file and set up the logger
     cfg_from_yaml_file(args.CFG_FILE, cfg)
+
+    if args.DATA_PATH:
+        cfg['DATA_CONFIG']['DATA_PATH'] = args.DATA_PATH
+        cfg['DATA_CONFIG']['INFO_PATH']['train'] = args.DATA_PATH + 'kitti_infos_trainval.pkl'
+        cfg['DATA_CONFIG']['INFO_PATH']['test'] = args.DATA_PATH + 'kitti_infos_trainval.pkl'
+
     logger = common_utils.create_logger()
     logger.info('-----------------Kitti Attack Test-------------------------')
     
@@ -323,27 +363,23 @@ if __name__ == "__main__":
     whether_eval_init_patch(args, cfg, model, kitti_adv_dataset, logger)
 
     ### Define the loss function and optimization method
-    criterion = mesh_objectwise_loss(freezed_iou = False, 
-                                #  normalized = False, 
-                                 verbose=False)
-    
-    deepfool_perturbate = objectwise_deepfool(model=model, freezed_iou = False, 
-                                    normalized = False, 
-                                    verbose=False)
-
     rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = False,
-                    frozen_logit = False,
-                    confidence_threshold = 0.1,
-                    iou_threshold = 0.1, 
-                    verbose = True)
+                 frozen_logit = False,
+                 confidence_threshold = 0.1,
+                 iou_threshold = 0.1, 
+                 verbose = True)
     
     ### Evaluate patch attack with one epoch
-    evaluate_one_epoch_attack(args,
+    grad_cache = []
+    grad_cache = evaluate_one_epoch_attack(args,
                             enable_adv = True, 
                             update = True, 
                             visualize = True, 
-                            verbose_epoch= -1)
+                            verbose_epoch= -1,
+                            grad_cache = grad_cache)
     
+    ### Save the grad cache
+    save_grad_cache(grad_cache)
 
     ### Visualize the adversarial examples
     vis_adv_examples(kitti_adv_dataset)
@@ -362,10 +398,3 @@ if __name__ == "__main__":
             infer_time=True
         )
 
-
-
-
-
-
-
-    
