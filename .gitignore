@@ -1,6 +1,7 @@
 # dataset, log or cache
 eval_output/
 test_playground.ipynb
+check_grad.pkl
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
