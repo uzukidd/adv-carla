@@ -81,7 +81,7 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
                               verbose_epoch: int = 100,
                               grad_cache = None):
     kitti_adv_dataset.enable_adversarial_patch(enable_adv)
-    # print(kitti_adv_dataset[0]) # Error adv-carla/data_tools.py", line 396, in prepare_gtbox
+    print(kitti_adv_dataset[0]) # Error adv-carla/data_tools.py", line 396, in prepare_gtbox
     
     for i, batch_dict in tqdm(enumerate(kitti_adv_dataset), total=kitti_adv_dataset.__len__()):
         load_data_to_gpu(batch_dict)
@@ -275,7 +275,7 @@ def parse_config():
     args.add_argument('--DATA_CONFIG_FILE', type=str, default="./cfgs/dataset_configs/kitti_dataset.yaml", help='dataset configuration file')
     args.add_argument('--DATA_PATH', type=str, default="/home/ksas/Public/datasets/KITTI", help='dataset path')
     args.add_argument('--CKPT_PATH', type=str, default="/home/ksas/Public/model_zoo/pcdet/pointrcnn_7870.pth", help='checkpoint path')
-    args.add_argument('--ROOFTOP_ANNOTATE', type=str, default="/home/ksas/uzuki_space/vehicle-shape-reconstruction/rooftop_appro.pkl", help='rooftop annotation path')
+    args.add_argument('--ROOFTOP_ANNOTATE', type=str, default="/home/ksas/uzuki_space/vehicle-shape-reconstruction/rooftop_appro_std.pkl", help='rooftop annotation path')
     args.add_argument('--BATCH_SIZE', type=int, default=1, help='batch size')
     args.add_argument('--WORKERS', type=int, default=4, help='workers')
     args.add_argument('--DIST_TEST', type=bool, default=False, help='distributed test')
@@ -293,12 +293,12 @@ def parse_config():
 
     if args.DATA_PATH:
         cfg['DATA_CONFIG']['DATA_PATH'] = args.DATA_PATH
-        cfg['DATA_CONFIG']['INFO_PATH']['train'] = [args.DATA_PATH + 'kitti_infos_trainval.pkl']
-        cfg['DATA_CONFIG']['INFO_PATH']['test'] = [args.DATA_PATH + 'kitti_infos_trainval.pkl']
+        cfg['DATA_CONFIG']['INFO_PATH']['train'] = [args.DATA_PATH + os.sep + 'kitti_infos_trainval.pkl']
+        cfg['DATA_CONFIG']['INFO_PATH']['test'] = [args.DATA_PATH + os.sep + 'kitti_infos_trainval.pkl']
 
     logger = common_utils.create_logger()
     logger.info('-----------------Kitti Attack Test-------------------------')
-    
+
     return args, cfg, logger
 
 
