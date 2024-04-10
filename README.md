@@ -19,7 +19,7 @@ Following [johnnovak's project](https://github.com/johnnovak/raytriangle-test), 
 
 ### Mesh Alignment
 
-Refer to [here](./README_mesh_align.md) for more details.
+Refer to [here](./src/README_mesh_align.md) for more details.
 
 
 
