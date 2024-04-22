@@ -8,11 +8,14 @@ import glob
 from copy import deepcopy
 from pathlib import Path
 
+from raytorch.LiDAR import LiDAR_base
+
+import pytorch3d
 from pytorch3d.ops import sample_points_from_meshes, laplacian
 from pytorch3d.loss import mesh_laplacian_smoothing
 from pytorch3d.structures import Meshes, join_meshes_as_batch
 from pytorch3d.utils import ico_sphere
-from pytorch3d.transforms import Scale
+from pytorch3d.transforms import Scale, Rotate, Translate, euler_angles_to_matrix
 from pytorch3d.vis.plotly_vis import AxisArgs, plot_batch_individually, plot_scene
 
 from cudaext.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
@@ -180,7 +183,9 @@ class kitti_carla_dataset(DatasetTemplate):
     
     
 class adversarial_patch_3d:
-    def __init__(self, basic_mesh):
+    def __init__(self, 
+                 basic_mesh, 
+                 scale:list):
         self.basic_mesh: Meshes = basic_mesh
         self.deform_vert: torch.Tensor = torch.zeros_like(basic_mesh.verts_packed(), requires_grad=True).cuda().contiguous()
         self.deform_vert.requires_grad_(True)
@@ -191,7 +196,7 @@ class adversarial_patch_3d:
         self.global_translation: torch.Tensor = torch.tensor([0.0, 0.0, 0.0]).cuda()
         self.global_translation.requires_grad_(True)
         
-        self.scale: torch.Tensor = torch.tensor([0.7, 0.7, 0.5]).cuda()
+        self.scale: torch.Tensor = torch.tensor(scale).cuda()
         self.theta: torch.Tensor = torch.tensor([0.0]).cuda()
         self.theta.requires_grad_(True)
         
@@ -202,25 +207,38 @@ class adversarial_patch_3d:
         print(f"mesh vertex count : {self.basic_mesh.verts_packed().size()}")
         
         
-    def generate_rotate_matrix(self) -> torch.Tensor:
+    def generate_rotate_matrix(self, theta:torch.Tensor) -> torch.Tensor:
         tensor_0 = torch.zeros(1).cuda()
-        tensor_1 = torch.ones(1).cuda()
-        RZ = torch.stack([
-                torch.stack([torch.cos(self.theta), -torch.sin(self.theta), tensor_0]),
-                torch.stack([torch.sin(self.theta), torch.cos(self.theta), tensor_0]),
-                torch.stack([tensor_0, tensor_0, tensor_1])]).reshape(3,3)
-        # print(RZ)
+        RZ = euler_angles_to_matrix(torch.concatenate([tensor_0, tensor_0, theta]), ["X", "Y", "Z"])
+
         return RZ
         
     def get_basic_mesh(self):
         return self.basic_mesh
+    
+    def get_transformed_mesh(self, pos:torch.Tensor,
+                                theta:torch.Tensor):
+        """
+            Args:
+                pos: [3]
+                theta: [1]
+        """
+        deformed_mesh = self.get_deformed_mesh()
+        verts = deformed_mesh.verts_padded()
+        R = self.generate_rotate_matrix(theta)
+        verts = torch.matmul(verts, R.T)
+        verts = verts + (pos - self.get_base_coord(need_naive_rooftop_approxiamte=False))
+        deformed_mesh = deformed_mesh.update_padded(verts)
+        
+        return deformed_mesh
+        
         
     def get_deformed_mesh(self):
         offset = self.scale[None, :] \
                     * self.init_vert_quadrant \
                     * torch.sigmoid(self.init_vert_logit + self.deform_vert) \
                     + (self.offset_limit * torch.tanh(self.global_translation/self.offset_limit))[None, :]
-        R = self.generate_rotate_matrix()
+        R = self.generate_rotate_matrix(self.theta)
         rotated_vert = torch.matmul(offset, R.T)
         return self.basic_mesh.update_padded(rotated_vert.unsqueeze(0))
     
@@ -258,9 +276,17 @@ class adversarial_patch_3d:
             return self.deform_vert.new_tensor([0.0, 0.0, base_z], requires_grad=False)
     
 class adv_dataset(DatasetTemplate):
+    
+    CAR_ADV_PATCH_SCALE = [0.7, 0.7, 0.5]
+    PED_ADV_PATCH_SCALE = [0.3, 0.3, 0.3]
+    
     def __init__(self, parent_dataset, 
-                 sample_amount = 50, 
+                 sample_amount = [50, 25], 
                  surrogate_model = None, 
+                 enable_car:bool = True,
+                 enable_ped:bool = False,
+                 enable_bicycle:bool = False,
+                 lidar:LiDAR_base = None,
                  rooftop_approximate: list[np.ndarray] = None,
                  target_class = 1):
         """
@@ -268,12 +294,24 @@ class adv_dataset(DatasetTemplate):
             parent_dataset:
         """
         super().__init__(
-            dataset_cfg=parent_dataset.dataset_cfg, class_names=parent_dataset.class_names, training=parent_dataset.training, root_path=parent_dataset.root_path, logger=parent_dataset.logger
+            dataset_cfg=parent_dataset.dataset_cfg, 
+            class_names=parent_dataset.class_names, 
+            training=parent_dataset.training, 
+            root_path=parent_dataset.root_path, 
+            logger=parent_dataset.logger
         )
+        
+        
         self.dataset = parent_dataset
         self.parent_dataset = parent_dataset
         self.evaluating = False
         self.enabled_adversarial_patch = True
+        self.lidar = lidar
+        
+        self.enable_car = enable_car
+        self.enable_ped = enable_ped
+        self.enable_bicycle = enable_bicycle
+        
         self.target_class = target_class # 0 for background
         self.surrogate_model = surrogate_model
         self.sample_amount = sample_amount
@@ -289,13 +327,28 @@ class adv_dataset(DatasetTemplate):
                 
             self.logger.info('Successfully loaded rooftop appromximation: %d' % (rooftop_size))
             
-        self.universal_adv_patch = adversarial_patch_3d(basic_mesh=self.generate_basic_mesh(
-            level=2).cuda())
+        self.universal_adv_patch_car = adversarial_patch_3d(basic_mesh=self.generate_basic_mesh(
+            scale=self.CAR_ADV_PATCH_SCALE,
+            level=2).cuda(),
+            scale=self.CAR_ADV_PATCH_SCALE)
+        
+        self.universal_adv_patch_ped = adversarial_patch_3d(basic_mesh=self.generate_basic_mesh(
+            scale=self.PED_ADV_PATCH_SCALE,
+            level=2).cuda(),
+            scale=self.PED_ADV_PATCH_SCALE)
         
         # self.logger.info(f"ground truth boxes statistic: {self.get_gt_boxes_statistic_info()}")
 
     def __len__(self):
-        return len(self.parent_dataset)
+        return self.parent_dataset.__len__()
+    
+    def get_adversarial_parameter(self):
+        return [self.universal_adv_patch_car.get_mesh_deform_vert(),
+                self.universal_adv_patch_car.theta,
+                self.universal_adv_patch_car.global_translation,
+                self.universal_adv_patch_ped.get_mesh_deform_vert(),
+                self.universal_adv_patch_ped.theta,
+                self.universal_adv_patch_ped.global_translation]
 
     def __getitem__(self, index):
         batch_dict = self.parent_dataset.__getitem__(index)
@@ -307,11 +360,17 @@ class adv_dataset(DatasetTemplate):
         if self.rooftop_approximate is not None:
             rooftop_approximate = self.rooftop_approximate[index]
         
-        batch_dict = self.prepare_gtbox(batch_dict,
+        batch_dict = self.prepare_car_gtbox(batch_dict,
             rooftop_approximate)
+        
+        batch_dict = self.prepare_pedestrain_gtbox(batch_dict)
+        
+        batch_dict = self.prepare_bicycle_gtbox(batch_dict)
         
         if self.enabled_adversarial_patch:
             batch_dict=self.prepare_adversarial_data(batch_dict)
+            
+        batch_dict = self.collect_all_class_gtbox(batch_dict)
         
         return batch_dict
     
@@ -328,68 +387,84 @@ class adv_dataset(DatasetTemplate):
         self.enabled_adversarial_patch = enable
         
     def prepare_adversarial_data(self, batch_dict):
-        _, theta, _ = torch.split(batch_dict['gt_boxes'].squeeze(0), [6, 1, 1], dim=1)
+        gt_boxes_car = batch_dict.get("gt_boxes_car", None) #  [1, N, 8]
+        gt_boxes_ped = batch_dict.get("gt_boxes_ped", None) #  [1, N, 8]
+        gt_boxes_bicycle = batch_dict.get("gt_boxes_bicycle", None) #  [1, N, 8]
         
-        batch_dict["points"] = self.attach_adv_patch_scene(batch_dict["points"][:, 1:4], 
-                                                        self.universal_adv_patch,
-                                                        theta, 
-                                                        batch_dict["rooftop_approximate"],
-                                                        self.sample_amount)
-        batch_dict["points"] = F.pad(batch_dict["points"], (1, 1), "constant", 0)
+        if gt_boxes_car is not None and self.enable_car:
+            _, theta, _ = torch.split(gt_boxes_car.squeeze(0), [6, 1, 1], dim=1)
+            
+            batch_dict["points"] = self.attach_adv_patch_scene_car_aux(batch_dict["points"][:, 1:4], 
+                                                            self.universal_adv_patch_car,
+                                                            theta, 
+                                                            batch_dict["rooftop_approximate"],
+                                                            self.sample_amount[0])
+            batch_dict["points"] = F.pad(batch_dict["points"], (1, 1), "constant", 0)
+            
+        if gt_boxes_ped is not None and self.enable_ped:
+            pos_trans, theta, _ = torch.split(gt_boxes_ped.squeeze(0), [6, 1, 1], dim=1)
+            
+            batch_dict["points"] = self.attach_adv_patch_scene_ped_aux(batch_dict["points"][:, 1:4], 
+                                                            self.universal_adv_patch_ped,
+                                                            pos_trans,
+                                                            theta, 
+                                                            self.sample_amount[1])
+            batch_dict["points"] = F.pad(batch_dict["points"], (1, 1), "constant", 0)
         return batch_dict
     
-    
-    # def prepare_adversarial_data(self, data_dict):
-    #     idx = data_dict["idx"]
-    #     rooftop_approximate = None
-    #     pos_trans = None
-    #     theta = None
+    def collect_all_class_gtbox(self, batch_dict):
+        gt_boxes_car = batch_dict.get("gt_boxes_car", None) #  [1, N, 8]
+        gt_boxes_ped = batch_dict.get("gt_boxes_ped", None) #  [1, N, 8]
+        gt_boxes_bicycle = batch_dict.get("gt_boxes_bicycle", None) #  [1, N, 8]
         
-    #     if self.rooftop_approximate is not None:
-    #         rooftop_approximate = self.rooftop_approximate[idx]
-        
-    #     if self.surrogate_model is not None:
-    #         pred_dicts = None
-    #         surrogate_dict = deepcopy(data_dict)
-    #         with torch.no_grad():
-    #             self.surrogate_model.eval()
-    #             pred_dicts, _ = self.surrogate_model.forward(surrogate_dict)
-    #             gts = pred_dicts[0]['pred_boxes'].detach().clone()
-    #             gt_classes = pred_dicts[0]['pred_labels'].detach().clone()
-    #             gts = torch.concatenate([gts, gt_classes.view(-1, 1)], axis=1)
-    #             data_dict['gt_boxes'] = gts.view(1, -1, 8)
+        gt_boxes = []
+        if gt_boxes_car is not None: 
+            gt_boxes.append(gt_boxes_car)
             
-    #     elif data_dict.get('gt_boxes', None) is not None:
-    #         pass
-        
-    #     if self.rooftop_approximate is not None:            
-    #         print(data_dict['gt_boxes'].size())
-    #         print(rooftop_approximate.shape)
-    #     else:
-    #         data_dict['gt_boxes'] = self.prepare_gtbox(data_dict['gt_boxes'], 
-    #                         data_dict["points"])
+        if gt_boxes_ped is not None: 
+            gt_boxes.append(gt_boxes_ped)
             
-    #         pos_trans, theta, gt_labels = torch.split(data_dict['gt_boxes'].squeeze(0), [6, 1, 1], dim=1)
-    #         pos_trans = pos_trans[gt_labels[:, 0] == self.target_class]
-    #         theta = theta[gt_labels[:, 0] == self.target_class]
-    #         data_dict["points"] = self.attach_adv_patch_scene(data_dict["points"][:, 1:4], 
-    #                                                         self.universal_adv_patch,
-    #                                                         pos_trans, 
-    #                                                         theta, 
-    #                                                         rooftop_approximate,
-    #                                                         self.sample_amount)
-    #         data_dict["points"] = F.pad(data_dict["points"], (1, 1), "constant", 0)
-    #     return data_dict
+        if gt_boxes_bicycle is not None: 
+            gt_boxes.append(gt_boxes_bicycle)
+            
+        batch_dict['gt_boxes_car'] = torch.concat(gt_boxes, 
+                                                  dim = 1) # [1, N1 + N2 + N3, 8]
+        return batch_dict
     
-    def prepare_gtbox(self, batch_dict,
-                      rooftop_approximate: list[np.ndarray]):
+    def prepare_bicycle_gtbox(self, batch_dict):
         """
             gt_boxes: [1, N, 8]
-            points: [M, 5]
         """
         gt_boxes: torch.Tensor = batch_dict['gt_boxes']
         
-        classes_mask = (self.target_class == gt_boxes[:, :, 7].view(-1))
+        classes_mask = (gt_boxes[:, :, 7].view(-1) == 3)
+        gt_boxes = gt_boxes[:, classes_mask]
+
+        batch_dict['gt_boxes_bicycle'] = gt_boxes
+
+        return batch_dict
+    
+    def prepare_pedestrain_gtbox(self, batch_dict):
+        """
+            gt_boxes: [1, N, 8]
+        """
+        gt_boxes: torch.Tensor = batch_dict['gt_boxes']
+        
+        classes_mask = (gt_boxes[:, :, 7].view(-1) == 2)
+        gt_boxes = gt_boxes[:, classes_mask]
+
+        batch_dict['gt_boxes_ped'] = gt_boxes
+
+        return batch_dict
+    
+    def prepare_car_gtbox(self, batch_dict,
+                      rooftop_approximate: list[np.ndarray]):
+        """
+            gt_boxes: [1, N, 8]
+        """
+        gt_boxes: torch.Tensor = batch_dict['gt_boxes']
+        
+        classes_mask = (gt_boxes[:, :, 7].view(-1) == 1)
         gt_boxes = gt_boxes[:, classes_mask]
         
         vaild_mask = [item is not None for item in rooftop_approximate]
@@ -403,25 +478,27 @@ class adv_dataset(DatasetTemplate):
         else:
             rooftop_approximate = None
             
-        batch_dict['gt_boxes'] = gt_boxes
+        batch_dict['gt_boxes_car'] = gt_boxes
         batch_dict['rooftop_approximate'] = rooftop_approximate
 
         return batch_dict
     
     @staticmethod
-    def generate_basic_mesh(level:int = 0, eps = 0.0):
+    def generate_basic_mesh(level:int = 0,
+                            scale:list=[0.7, 0.7, 0.5],
+                            eps = 0.0):
         mSphere = ico_sphere(level)
-        # new_verts = mSphere.verts_padded() * scale
+
         new_vert = mSphere.verts_padded()
-        new_vert[:, :, 0] = new_vert[:, :, 0] * 0.7 * (1 - eps)
-        new_vert[:, :, 1] = new_vert[:, :, 1] * 0.7 * (1 - eps)
-        new_vert[:, :, 2] = new_vert[:, :, 2] * 0.5 * (1 - eps)
+        new_vert[:, :, 0] = new_vert[:, :, 0] * scale[0] * (1 - eps)
+        new_vert[:, :, 1] = new_vert[:, :, 1] * scale[1] * (1 - eps)
+        new_vert[:, :, 2] = new_vert[:, :, 2] * scale[2] * (1 - eps)
         # new_vert[:, :, 0] = new_vert[:, :, 0] - 0.2
         mSphere = mSphere.update_padded(new_vert)
         return mSphere
     
-    @staticmethod
-    def attach_adv_patch_scene(points, adv_patch:adversarial_patch_3d, 
+
+    def attach_adv_patch_scene_car_aux(self, points, adv_patch:adversarial_patch_3d, 
                                theta, 
                                rooftop_approximate: np.ndarray = None,
                                sample_amount = 50):
@@ -430,11 +507,39 @@ class adv_dataset(DatasetTemplate):
         if rooftop_approximate is not None:
             n = rooftop_approximate.shape[0]
             for i in range(n):
-                pts = adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3) - adv_patch.get_base_coord(False)
-                extend_pts = torch.from_numpy(rooftop_approximate[i])[None, :3].float().cuda() + adv_dataset.rotate_points(
-                                                        pts, theta[i])
+                extend_pts = None
+                if self.lidar is not None:
+                    # deformed_mesh = adv_patch.get_transformed_mesh(torch.tensor([10, 0.0, 0.0]).cuda(), theta[i])
+                    deformed_mesh = adv_patch.get_transformed_mesh(torch.from_numpy(rooftop_approximate[i]).float().cuda(), theta[i])
+                    extend_pts = self.lidar.scan_triangles(deformed_mesh).cuda()
+                else:
+                    pts = adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3) - adv_patch.get_base_coord(False)
+                    extend_pts = torch.from_numpy(rooftop_approximate[i])[None, :3].float().cuda() + adv_dataset.rotate_points(
+                                                            pts, theta[i])
                 pts_set.append(extend_pts)
+                
+        return torch.concatenate(pts_set)
+    
+    def attach_adv_patch_scene_ped_aux(self, points, adv_patch:adversarial_patch_3d, 
+                               pos_trans:torch.Tensor,
+                               theta:torch.Tensor,  
+                               sample_amount = 50):
+        pts_set = [points]
+        
+        if pos_trans is None:
+            return torch.concatenate(pts_set)
+        
+        n = pos_trans.__len__()
+        
+        for i in range(n):
+            pts = adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3) - adv_patch.base_coord
+            extend_pts = pos_trans[i][None, :3] + adv_dataset.rotate_points(
+                                                    pts, theta[i])
+            extend_pts[:, 2] += pos_trans[i][None, 5] / 2.0
             
+            pts_set.append(extend_pts)
+        
+       
         return torch.concatenate(pts_set)
     
     @staticmethod
