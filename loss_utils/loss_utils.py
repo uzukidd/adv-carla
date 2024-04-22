@@ -185,7 +185,9 @@ class relevant_bounding_box_loss(nn.Module):
         
         target_class_logit = target_class - 1
 
-        assert gt_boxes.size(0), "at leaset one gt box exists."
+        # assert gt_boxes.size(0), "at leaset one gt box exists."
+        if gt_boxes.size(0) == 0:
+            return torch.zeros(1, requires_grad=True).cuda()
         
         # assign 
         # batch_cls_preds_normalized = F.softmax(batch_cls_preds, dim=1) # [N, 3]
@@ -280,7 +282,9 @@ class relevant_bounding_box_loss(nn.Module):
         gt_boxes = gt_boxes[gt_labels[:, 0] == target_class]
         gt_labels = gt_labels[gt_labels[:, 0] == target_class]
         
-        assert gt_boxes.size(0), "at leaset one gt box exists."
+        if gt_boxes.size(0) == 0:
+            return torch.zeros([0], requires_grad=True)
+        # assert gt_boxes.size(0), "at leaset one gt box exists."
         
         # assign 
         # batch_cls_preds_normalized = F.softmax(batch_cls_preds, dim=1) # [N, 3]
