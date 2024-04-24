@@ -11,6 +11,9 @@ __pycache__/
 # for vscode
 .vscode
 
+# for debug access
+buges.md
+
 # for cuda-extension-pytorch
 cuda-extension-pytorch/
 

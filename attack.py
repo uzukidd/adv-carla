@@ -98,6 +98,7 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
 
     
     kitti_adv_dataset.enable_adversarial_patch(enable_adv)
+    print(kitti_adv_dataset[0]) # Error adv-carla/data_tools.py", line 396, in prepare_gtbox
     
     for i, batch_dict in tqdm(enumerate(kitti_adv_dataset), total=kitti_adv_dataset.__len__()):
         load_data_to_gpu(batch_dict)
@@ -271,8 +272,9 @@ def parse_config():
 
     ### Load the configuration file and set up the logger
     cfg_from_yaml_file(args.CFG_FILE, cfg)
-    
+
     return args, cfg
+
 
 
 def set_seed_and_device(args):
