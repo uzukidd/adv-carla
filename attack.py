@@ -98,7 +98,6 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
 
     
     kitti_adv_dataset.enable_adversarial_patch(enable_adv)
-    print(kitti_adv_dataset[0]) # Error adv-carla/data_tools.py", line 396, in prepare_gtbox
     
     for i, batch_dict in tqdm(enumerate(kitti_adv_dataset), total=kitti_adv_dataset.__len__()):
         load_data_to_gpu(batch_dict)
@@ -296,7 +295,6 @@ if __name__ == "__main__":
     
     args.SAVE_PATH = f"output/train/{args.exp_name}"
     os.makedirs(args.SAVE_PATH)
-    pytorch3d_file_manager = IO()
     logger = common_utils.create_logger(log_file = os.path.join(args.SAVE_PATH, "exp_log.log"))
     logger.info('-----------------Kitti Attack Test-------------------------')
     logger.info(args)
@@ -370,21 +368,21 @@ if __name__ == "__main__":
     ### Save the grad cache
     save_grad_cache(grad_cache)
     kitti_adv_dataset.save_adversarial_parameter(os.path.join(args.SAVE_PATH, "final_adversarial_patch_checkpoint.pt"))
-
+    logger.info(f'Checkpoint has been saved as: \t{os.path.join(args.SAVE_PATH, "final_adversarial_patch_checkpoint.pt")}')
     ### Visualize the adversarial examples
     # vis_adv_examples(kitti_adv_dataset)
 
     ### Evaluate the adversarial examples
-    kitti_adv_dataset.enable_adversarial_patch(True)
-    eval_utils.eval_one_epoch(
-            cfg=cfg,
-            args=None, 
-            model=model, 
-            dataloader=kitti_adv_dataset,
-            epoch_id=0, 
-            logger=logger,
-            dist_test=args.DIST_TEST,
-            result_dir=Path(args.EVAL_OUTPUT_DIR),
-            infer_time=True
-        )
+    # kitti_adv_dataset.enable_adversarial_patch(True)
+    # eval_utils.eval_one_epoch(
+    #         cfg=cfg,
+    #         args=None, 
+    #         model=model, 
+    #         dataloader=kitti_adv_dataset,
+    #         epoch_id=0, 
+    #         logger=logger,
+    #         dist_test=args.DIST_TEST,
+    #         result_dir=Path(args.EVAL_OUTPUT_DIR),
+    #         infer_time=True
+    #     )
 
