@@ -267,6 +267,11 @@ class adversarial_patch_3d:
     
     def clear_mesh_gradient(self):
         self.deform_vert.grad.zero_()
+        
+    def load_parameter(self, input_dict:dict):
+        self.deform_vert = input_dict["deform_vert"]
+        self.theta = input_dict["theta"]
+        self.global_translation = input_dict["global_translation"]
     
     def get_base_coord(self, need_naive_rooftop_approxiamte:bool=True):
         base_z = self.basic_mesh.verts_packed()[:, 2].min()
@@ -288,7 +293,9 @@ class adv_dataset(DatasetTemplate):
                  enable_bicycle:bool = False,
                  lidar:LiDAR_base = None,
                  rooftop_approximate: list[np.ndarray] = None,
-                 target_class = 1):
+                 target_class = 1,
+                 car_basic_patch:Meshes = None,
+                 ped_basic_patch:Meshes = None,):
         """
         Args:
             parent_dataset:
@@ -326,21 +333,46 @@ class adv_dataset(DatasetTemplate):
                 rooftop_size += i.__len__()
                 
             self.logger.info('Successfully loaded rooftop appromximation: %d' % (rooftop_size))
-            
-        self.universal_adv_patch_car = adversarial_patch_3d(basic_mesh=self.generate_basic_mesh(
+        
+        if car_basic_patch is None:
+            car_basic_patch = self.generate_basic_mesh(
             scale=self.CAR_ADV_PATCH_SCALE,
-            level=2).cuda(),
+            level=2).cuda()
+        self.universal_adv_patch_car = adversarial_patch_3d(basic_mesh=car_basic_patch,
             scale=self.CAR_ADV_PATCH_SCALE)
         
-        self.universal_adv_patch_ped = adversarial_patch_3d(basic_mesh=self.generate_basic_mesh(
+        if ped_basic_patch is None:
+            ped_basic_patch = self.generate_basic_mesh(
             scale=self.PED_ADV_PATCH_SCALE,
-            level=2).cuda(),
+            level=2).cuda()
+        self.universal_adv_patch_ped = adversarial_patch_3d(basic_mesh=ped_basic_patch,
             scale=self.PED_ADV_PATCH_SCALE)
         
         # self.logger.info(f"ground truth boxes statistic: {self.get_gt_boxes_statistic_info()}")
 
     def __len__(self):
         return self.parent_dataset.__len__()
+    
+    def load_adversarial_parameter(self, path:str):
+        input_dict = torch.load(path)
+        self.universal_adv_patch_car.load_parameter(input_dict["universal_adv_patch_car"])
+        self.universal_adv_patch_ped.load_parameter(input_dict["universal_adv_patch_ped"])
+        
+    def save_adversarial_parameter(self, path:str):
+        output_dict = {
+            "universal_adv_patch_car" : {
+                "deform_vert":self.universal_adv_patch_car.deform_vert,
+                "theta": self.universal_adv_patch_car.theta,
+                "global_translation": self.universal_adv_patch_car.global_translation,
+            },
+            "universal_adv_patch_ped" : {
+                "deform_vert":self.universal_adv_patch_ped.deform_vert,
+                "theta": self.universal_adv_patch_ped.theta,
+                "global_translation": self.universal_adv_patch_ped.global_translation,
+            },
+        }
+        
+        torch.save(output_dict, path)
     
     def get_adversarial_parameter(self):
         return [self.universal_adv_patch_car.get_mesh_deform_vert(),

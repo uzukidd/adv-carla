@@ -2,7 +2,7 @@
 eval_output/
 test_playground.ipynb
 check_grad.pkl
-
+output/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
