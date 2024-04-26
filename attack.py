@@ -84,8 +84,14 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
                               verbose_epoch: int = 100,
                               grad_cache = None):
     
-    car_rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = False,
-                 frozen_logit = False,
+    car_headbox_rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = args.iou_frozen,
+                 frozen_logit = args.logit_frozen,
+                 confidence_threshold = 0.1,
+                 iou_threshold = 0.1, 
+                 verbose = True)
+    
+    car_roihead_rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = args.iou_frozen,
+                 frozen_logit = args.logit_frozen,
                  confidence_threshold = 0.1,
                  iou_threshold = 0.1, 
                  verbose = True)
@@ -129,26 +135,42 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
                     grad_cache[-1].append([grad.cpu().numpy() for grad in kitti_adv_dataset.universal_adv_patch.get_mesh_gradient()])
             
         if args.OPTIM == "rbboxloss":
-            car_mesh_proposal_loss = car_rbbox_loss_func(batch_dict = point_headbox_ret_dict, 
-                                    gt_boxes = batch_dict["gt_boxes"], 
-                                    target_class = 1,
-                                    logit_normal = "sigmoid",
-                                    ret_part_loss = False)
+            mesh_loss = torch.zeros(1).cuda()
+            if args.headbox_attack:
+                car_mesh_proposal_loss = car_headbox_rbbox_loss_func(batch_dict = point_headbox_ret_dict, 
+                                        gt_boxes = batch_dict["gt_boxes"], 
+                                        target_class = 1,
+                                        logit_normal = "sigmoid",
+                                        input_type = "headbox",
+                                        ret_part_loss = False)
+                mesh_loss = mesh_loss + car_mesh_proposal_loss
+                
+            if args.roihead_attack:
+                car_mesh_roi_loss = car_roihead_rbbox_loss_func(batch_dict = pointrcnn_head_ret_dict, 
+                                        gt_boxes = batch_dict["gt_boxes"], 
+                                        target_class = 1,
+                                        logit_normal = "sigmoid",
+                                        input_type = "roihead",
+                                        ret_part_loss = False)
+                mesh_loss = mesh_loss + args.roi_head_weights * car_mesh_roi_loss
+                
                 
             regular_loss = kitti_adv_dataset.universal_adv_patch_car.get_laplacian_loss()
-            total_loss = car_mesh_proposal_loss + args.laplacian_weights * regular_loss
+            total_loss = mesh_loss + args.laplacian_weights * regular_loss
+            
             optimizer.zero_grad()
             model.zero_grad()
             total_loss.backward()
 
-            
         else:
             raise NotImplementedError
         
         if verbose_epoch > 0 and i % verbose_epoch == 0:
             # logger.info(f"deformed verts of mesh: \t{kitti_adv_dataset.universal_adv_patch.get_mesh_deform_vert()}")
-            # logger.info(f"deformed vert gradients of mesh: \t{kitti_adv_dataset.universal_adv_patch.get_mesh_gradient()}")
+            vert_grad, translate_grad, theta_grad = kitti_adv_dataset.universal_adv_patch_car.get_mesh_gradient()
+            logger.info(f"deformed vert gradients of mesh: \t{vert_grad}")
 
+            
             if visualize:
 
                 V.draw_scenes(
@@ -258,14 +280,18 @@ def parse_config():
     args.add_argument('--WORKERS', type=int, default=4, help='workers')
     args.add_argument('--DIST_TEST', action='store_true', help='distributed test')
     args.add_argument('--OPTIM', type=str, default="rbboxloss", help='optimization method')
+    args.add_argument('--headbox-attack', action='store_true', help='enable headbox attack')
+    args.add_argument('--roihead-attack', action='store_true', help='enable roihead attack')
+
     args.add_argument('--EVAL_INIT_PATH', action='store_true', help='evaluation initial path')
     args.add_argument('--CHECK_GRAD_QUAD', action='store_true', help='check grad quad')
-    args.add_argument('--roi_head_weights', type=float, default=1.0, help='roi head weights')
+    args.add_argument('--roi-head-weights', type=float, default=1.0, help='roi head weights')
     args.add_argument('--laplacian_weights', type=float, default=0.001, help='laplacian weights')
     args.add_argument('--learning_rate', type=float, default=0.005, help='learning rate')
-    args.add_argument('--iou_frozen', action='store_true', help='freeze iou loss while optimization')
-    args.add_argument('--logit_frozen', action='store_true', help='freeze logit loss while optimization')
-    args.add_argument('--exp_name', type=str, default=str(int(time.time())), help='name of saving folder')
+    args.add_argument('--iou-frozen', action='store_true', help='freeze iou loss while optimization')
+    args.add_argument('--logit-frozen', action='store_true', help='freeze logit loss while optimization')
+    args.add_argument('--exp-name', type=str, default=str(int(time.time())), help='name of saving folder')
+    args.add_argument('--verbose-epoch', type=int, default=-1, help='verbose per epoch')
 
     args = args.parse_args()
 
@@ -346,13 +372,6 @@ if __name__ == "__main__":
     
     ### Whether to evaluate the initial patch
     whether_eval_init_patch(args, cfg, model, kitti_adv_dataset, logger)
-
-    ### Define the loss function and optimization method
-    rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = args.iou_frozen,
-                 frozen_logit = args.logit_frozen,
-                 confidence_threshold = 0.1,
-                 iou_threshold = 0.1, 
-                 verbose = True)
     
     ### Evaluate patch attack with one epoch
     kitti_adv_dataset.save_adversarial_parameter(os.path.join(args.SAVE_PATH, "initial_patch_checkpoint.pt"))
@@ -362,7 +381,7 @@ if __name__ == "__main__":
                             enable_adv = True, 
                             update = True, 
                             visualize = True, 
-                            verbose_epoch= -1,
+                            verbose_epoch = args.verbose_epoch,
                             grad_cache = grad_cache)
     
     ### Save the grad cache
@@ -373,16 +392,16 @@ if __name__ == "__main__":
     # vis_adv_examples(kitti_adv_dataset)
 
     ### Evaluate the adversarial examples
-    # kitti_adv_dataset.enable_adversarial_patch(True)
-    # eval_utils.eval_one_epoch(
-    #         cfg=cfg,
-    #         args=None, 
-    #         model=model, 
-    #         dataloader=kitti_adv_dataset,
-    #         epoch_id=0, 
-    #         logger=logger,
-    #         dist_test=args.DIST_TEST,
-    #         result_dir=Path(args.EVAL_OUTPUT_DIR),
-    #         infer_time=True
-    #     )
+    kitti_adv_dataset.enable_adversarial_patch(True)
+    eval_utils.eval_one_epoch(
+            cfg=cfg,
+            args=None, 
+            model=model, 
+            dataloader=kitti_adv_dataset,
+            epoch_id=0, 
+            logger=logger,
+            dist_test=args.DIST_TEST,
+            result_dir=Path(args.EVAL_OUTPUT_DIR),
+            infer_time=True
+        )
 
