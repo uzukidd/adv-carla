@@ -67,7 +67,7 @@ def parse_config():
     args.add_argument('--DIST_TEST', action='store_true', help='distributed test')
     args.add_argument('--exp_name', type=str, default=str(int(time.time())), help='name of saving folder')
 
-    args.add_argument('--ckpt_path', required=True, type=str, help='car mesh path')
+    args.add_argument('--adv_ckpt_path', required=True, type=str, help='car mesh path')
 
     args = args.parse_args()
 
@@ -143,8 +143,8 @@ if __name__ == "__main__":
                                     enable_car = True,
                                     enable_ped = False,
                                     enable_bicycle = False)
-    logger.info(f'Loading checkpoint from: \t{args.ckpt_path}')
-    kitti_adv_dataset.load_adversarial_parameter(args.ckpt_path)
+    logger.info(f'Loading checkpoint from: \t{args.adv_ckpt_path}')
+    kitti_adv_dataset.load_adversarial_parameter(args.adv_ckpt_path)
     ### Evaluate the adversarial examples
     kitti_adv_dataset.enable_adversarial_patch(True)
     eval_utils.eval_one_epoch(
