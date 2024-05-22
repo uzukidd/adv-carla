@@ -187,7 +187,7 @@ class relevant_bounding_box_loss(nn.Module):
 
         # assert gt_boxes.size(0), "at leaset one gt box exists."
         if gt_boxes.size(0) == 0:
-            return torch.zeros(1, requires_grad=True).cuda()
+            return masked_cls_preds_extended.new_zeros(1)
         
         # assign 
         # batch_cls_preds_normalized = F.softmax(batch_cls_preds, dim=1) # [N, 3]
@@ -273,7 +273,7 @@ class relevant_bounding_box_loss(nn.Module):
         #     print(f"batch_dict[\"batch_cls_preds\"]:\t{batch_dict['batch_cls_preds'].size()}")
         #     print(f"batch_dict[\"roi_labels\"]:\t{batch_dict['roi_labels'].size()}")
         #     print(f"batch_dict[\"batch_box_preds\"]:\t{batch_dict['batch_box_preds'].size()}")
-
+        
         batch_cls_preds:torch.Tensor = batch_dict["batch_cls_preds"].view(-1) # [N, ]
         roi_labels:torch.Tensor = batch_dict["roi_labels"].view(-1) # [N, ]
         batch_box_preds:torch.Tensor = batch_dict["batch_box_preds"].squeeze(dim=0) # [N, 7]
@@ -289,7 +289,7 @@ class relevant_bounding_box_loss(nn.Module):
         # assign 
         # batch_cls_preds_normalized = F.softmax(batch_cls_preds, dim=1) # [N, 3]
         if logit_normal == "sigmoid":
-            cls_preds_normalized = torch.sigmoid(batch_cls_preds) # [N, 3]
+            cls_preds_normalized = torch.sigmoid(batch_cls_preds) # [N, ]
         else:
             raise NotImplementedError
         
