@@ -96,9 +96,9 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
                  iou_threshold = 0.1, 
                  verbose = True)
 
-    ped_rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = False,
-                    frozen_logit = False,
-                    confidence_threshold = 0.01,
+    ped_rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = args.iou_frozen,
+                    frozen_logit = args.logit_frozen,
+                    confidence_threshold = 0.1,
                     iou_threshold = 0.01, 
                     verbose = True)
 
@@ -107,7 +107,7 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
     
     for i, batch_dict in tqdm(enumerate(kitti_adv_dataset), total=kitti_adv_dataset.__len__()):
         load_data_to_gpu(batch_dict)
-
+        
         if not torch.eq(batch_dict['gt_boxes'][0, :, 7], 1).any():
             # logger.info(f"no vehicles found in batch \t{i}")
             continue
@@ -118,21 +118,21 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
         point_headbox_ret_dict = point_headbox.forward_ret_dict
         pointrcnn_head_ret_dict = pointrcnn_head.forward_ret_dict
         
-        if args.CHECK_GRAD_QUAD:
-            n_size = batch_dict["gt_boxes"].size(1)
-            grad_cache.append([])
-            for n_idx_mask in range(n_size):
-                mesh_proposal_loss:torch.Tensor = rbbox_loss_func(batch_dict = point_headbox_ret_dict, 
-                                        gt_boxes = batch_dict["gt_boxes"][:, n_idx_mask:n_idx_mask+1, :], 
-                                        target_class = 1,
-                                        logit_normal = "sigmoid",
-                                        ret_part_loss = False)
+        # if args.CHECK_GRAD_QUAD:
+        #     n_size = batch_dict["gt_boxes"].size(1)
+        #     grad_cache.append([])
+        #     for n_idx_mask in range(n_size):
+        #         mesh_proposal_loss:torch.Tensor = rbbox_loss_func(batch_dict = point_headbox_ret_dict, 
+        #                                 gt_boxes = batch_dict["gt_boxes"][:, n_idx_mask:n_idx_mask+1, :], 
+        #                                 target_class = 1,
+        #                                 logit_normal = "sigmoid",
+        #                                 ret_part_loss = False)
 
-                optimizer.zero_grad()
-                model.zero_grad()
-                if mesh_proposal_loss.requires_grad:
-                    mesh_proposal_loss.backward(retain_graph = True)
-                    grad_cache[-1].append([grad.cpu().numpy() for grad in kitti_adv_dataset.universal_adv_patch.get_mesh_gradient()])
+        #         optimizer.zero_grad()
+        #         model.zero_grad()
+        #         if mesh_proposal_loss.requires_grad:
+        #             mesh_proposal_loss.backward(retain_graph = True)
+        #             grad_cache[-1].append([grad.cpu().numpy() for grad in kitti_adv_dataset.universal_adv_patch.get_mesh_gradient()])
             
         if args.OPTIM == "rbboxloss":
             mesh_loss = torch.zeros(1).cuda()
@@ -154,21 +154,35 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
                                         ret_part_loss = False)
                 mesh_loss = mesh_loss + args.roi_head_weights * car_mesh_roi_loss
                 
-                
             regular_loss = kitti_adv_dataset.universal_adv_patch_car.get_laplacian_loss()
             total_loss = mesh_loss + args.laplacian_weights * regular_loss
             
             optimizer.zero_grad()
             model.zero_grad()
             total_loss.backward()
+            
+            assert not torch.isnan(total_loss).any()
+            
+            if pointrcnn_head.pooled_features.grad is not None:
+                
+                if torch.isnan(pointrcnn_head.pooled_features.grad).any():
+                    pdb.set_trace()
+            #     xyz_features_grad, batch_point_features_grad = roipooling_grad_mapping(pointrcnn_head.pooled_features.grad, 
+            #                                                                         pointrcnn_head.batch_point_features, 
+            #                                                                         pointrcnn_head.pooled_pts_idx)
+            #     try:
+            #         pointrcnn_head.batch_point_features.backward(batch_point_features_grad, retain_graph = True)
+            #         batch_dict['points'][None, :, 1:4].backward(xyz_features_grad, retain_graph = True)
+            #     except RuntimeError as e:
+            #         pass
 
         else:
             raise NotImplementedError
         
         if verbose_epoch > 0 and i % verbose_epoch == 0:
             # logger.info(f"deformed verts of mesh: \t{kitti_adv_dataset.universal_adv_patch.get_mesh_deform_vert()}")
-            vert_grad, translate_grad, theta_grad = kitti_adv_dataset.universal_adv_patch_car.get_mesh_gradient()
-            logger.info(f"deformed vert gradients of mesh: \t{vert_grad}")
+            # vert_grad, translate_grad, theta_grad = kitti_adv_dataset.universal_adv_patch_car.get_mesh_gradient()
+            # logger.info(f"deformed vert gradients of mesh: \t{vert_grad}")
 
             
             if visualize:
@@ -182,9 +196,7 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
             """
                 set grad along z-axi to 0.
             """
-            vert_grad, translate_grad, theta_grad = kitti_adv_dataset.universal_adv_patch_car.get_mesh_gradient()
-            vert_grad[:, 2] = 0.
-            translate_grad[2] = 0.
+            kitti_adv_dataset.universal_adv_patch_car.constrain_z_grad()
             
             # vert_grad, translate_grad, theta_grad = kitti_adv_dataset.universal_adv_patch_ped.get_mesh_gradient()
             # vert_grad[:, 2] = 0.
@@ -259,8 +271,6 @@ def load_annotated_rooftop(ROOFTOP_ANNOTATE, logger):
     except TypeError as error:
         logger.info(error.__str__())
     
-    # logger.info(f"rooftop_approximate: {rooftop_approximate}")
-
     return rooftop_approximate
     
 
@@ -365,7 +375,9 @@ if __name__ == "__main__":
                                     lidar = lidar,
                                     enable_car = True,
                                     enable_ped = False,
-                                    enable_bicycle = False)
+                                    enable_bicycle = False,
+                                    enable_double = True,
+                                    cubic_level=1)
     
     optimizer = optim.Adam(kitti_adv_dataset.get_adversarial_parameter(), 
                        lr=args.learning_rate)
@@ -375,6 +387,8 @@ if __name__ == "__main__":
     
     ### Evaluate patch attack with one epoch
     kitti_adv_dataset.save_adversarial_parameter(os.path.join(args.SAVE_PATH, "initial_patch_checkpoint.pt"))
+    logger.info(f'Checkpoint has been saved as: \t{os.path.join(args.SAVE_PATH, "initial_patch_checkpoint.pt")}')
+
 
     grad_cache = []
     grad_cache = evaluate_one_epoch_attack(args,

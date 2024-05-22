@@ -202,8 +202,6 @@ class adversarial_patch_3d:
         
         self.init_vert_quadrant: torch.Tensor = torch.sign(basic_mesh.verts_packed()).detach().clone()
         self.init_vert_logit: torch.Tensor = torch.logit(torch.abs(basic_mesh.verts_packed()/self.scale[None, :])).detach().clone()
-        print(torch.abs(basic_mesh.verts_packed()/self.scale[None, :]))
-        print(torch.logit(torch.abs(basic_mesh.verts_packed()/self.scale[None, :])))
         print(f"mesh vertex count : {self.basic_mesh.verts_packed().size()}")
         
         
@@ -216,15 +214,17 @@ class adversarial_patch_3d:
     def get_basic_mesh(self):
         return self.basic_mesh
     
-    def get_transformed_mesh(self, pos:torch.Tensor,
+    def get_transformed_mesh(self, local_offset:torch.Tensor, pos:torch.Tensor,
                                 theta:torch.Tensor):
         """
             Args:
+                local_offset: [3]
                 pos: [3]
                 theta: [1]
         """
         deformed_mesh = self.get_deformed_mesh()
         verts = deformed_mesh.verts_padded()
+        verts = verts + local_offset
         R = self.generate_rotate_matrix(theta)
         verts = torch.matmul(verts, R.T)
         verts = verts + (pos - self.get_base_coord(need_naive_rooftop_approxiamte=False))
@@ -279,6 +279,156 @@ class adversarial_patch_3d:
             return self.deform_vert.new_tensor([0.2, 0.0, base_z], requires_grad=False)
         else:
             return self.deform_vert.new_tensor([0.0, 0.0, base_z], requires_grad=False)
+        
+class learnable_sphere:
+    
+    def __init__(self, level:int = 2,
+                    scale:list=[0.35, 0.35, 0.25],
+                    eps = 0.0):
+        self.scale: torch.Tensor = torch.tensor(scale).float().cuda()
+        self.basic_mesh = self.generate_basic_mesh(level=level, 
+                                                   scale=scale, 
+                                                   eps=eps)
+        
+        self.deform_vert_logit: torch.Tensor = torch.zeros_like(self.basic_mesh.verts_packed(), requires_grad=True).cuda().contiguous()
+        self.deform_vert_logit.requires_grad_(True)
+        
+        self.init_vert_quadrant: torch.Tensor = torch.sign(self.basic_mesh.verts_packed()).detach().clone()
+        self.init_vert_logit: torch.Tensor = torch.logit(torch.abs(self.basic_mesh.verts_packed() / 
+                                                                   self.scale[None, :])).detach().clone()
+        print(f"mesh vertex count : {self.basic_mesh.verts_packed().size()}")
+
+    
+    def get_parameters(self) -> list[torch.Tensor]:
+        return [self.deform_vert_logit]
+    
+    def deformed_meshes(self) -> Meshes:
+        deformed_vert = self.scale[None, :] \
+            * self.init_vert_quadrant \
+            * torch.sigmoid(self.init_vert_logit + self.deform_vert_logit)
+
+        return self.basic_mesh.update_padded(deformed_vert.unsqueeze(0))
+    
+    def get_transformed_meshes(self, translate:torch.Tensor):
+        deformed_meshes = self.deformed_meshes()
+        verts = deformed_meshes.verts_padded()
+        verts = verts + translate[None, :]
+        
+        return deformed_meshes.update_padded(verts)
+    
+    def get_base_coord(self):
+        base_z = self.basic_mesh.verts_packed()[:, 2].min()
+        
+        return self.deform_vert.new_tensor([0.0, 0.0, base_z], requires_grad=False)
+    
+    @staticmethod
+    def generate_basic_mesh(level:int,
+                            scale:list,
+                            eps):
+        mSphere = ico_sphere(level).cuda()
+
+        new_vert = mSphere.verts_padded()
+        new_vert[:, :, 0] = new_vert[:, :, 0] * scale[0] * (1 - eps)
+        new_vert[:, :, 1] = new_vert[:, :, 1] * scale[1] * (1 - eps)
+        new_vert[:, :, 2] = new_vert[:, :, 2] * scale[2] * (1 - eps)
+
+        mSphere = mSphere.update_padded(new_vert)
+        return mSphere
+
+class simple_cubic_meshes:
+    
+    def __init__(self, cubic_level:int = 2,
+                    scale:list=[0.7, 0.7, 0.5],
+                    eps = 0.0):
+        self.internal_atom: list[learnable_sphere] = None
+        self.scale = np.array(scale)
+        self.cubic_level = cubic_level
+        
+        self.offset_limit: torch.Tensor = torch.tensor([0.1]).cuda()
+        self.global_translation: torch.Tensor = torch.tensor([0.0, 0.0, 0.0]).cuda()
+        self.global_translation.requires_grad_(True)
+        
+        self.base_coord: torch.Tensor = torch.tensor([0.0, 0.0, -scale[2]]).float().cuda()
+        
+        self.theta: torch.Tensor = torch.tensor([0.0]).cuda()
+        self.theta.requires_grad_(True)
+        
+        self._init_internal_atoms()
+        self.lattice_grid = torch.stack([grid_pos.contiguous().view(-1) for grid_pos in self.generate_mesh_grid()], dim=1)
+        
+    def _init_internal_atoms(self):
+        dscale = self.scale / self.cubic_level
+        self.internal_atoms = []
+        for _ in range(self.cubic_level ** 3):
+            self.internal_atoms.append(learnable_sphere(level = 2,
+                                                        scale = dscale))
+            
+    def get_laplacian_loss(self):
+        deformed_mesh = self.get_deformed_lattice()
+        return mesh_laplacian_smoothing(deformed_mesh)
+            
+    def get_parameters(self):
+        parameters = [self.global_translation, self.theta]
+        for internal_atom in self.internal_atoms:
+            parameters.append(internal_atom.deform_vert_logit)
+        
+        return parameters
+    
+    def load_parameter(self, parameters:list):
+        self.global_translation = parameters[0]
+        self.theta = parameters[1]
+        for i, internal_atom in enumerate(self.internal_atoms):
+            internal_atom.deform_vert_logit = parameters[2 + i]
+            
+    def generate_mesh_grid(self):
+        dscale = self.scale/self.cubic_level
+        x = torch.arange(-self.scale[0] + dscale[0], 
+                         self.scale[0], dscale[0] * 2.0).cuda()
+        y = torch.arange(-self.scale[1] + dscale[1], 
+                         self.scale[1], dscale[1] * 2.0).cuda()
+        z = torch.arange(-self.scale[2] + dscale[2], 
+                         self.scale[2], dscale[2] * 2.0).cuda()
+        
+        grid_x, grid_y, grid_z = torch.meshgrid(x, y, z)
+        return grid_x, grid_y, grid_z
+
+    def get_deformed_lattice(self) -> Meshes:
+        atoms_meshes = []
+        for i in range(self.lattice_grid.size(0)):
+            atoms_meshes.append(self.internal_atoms[i].get_transformed_meshes(self.lattice_grid[i]))
+        
+        atoms_meshes = join_meshes_as_batch(atoms_meshes)
+        return atoms_meshes
+    
+    def get_transformed_lattice(self, 
+                                pos:torch.Tensor,
+                                theta:torch.Tensor) -> Meshes:
+        deformed_mesh = self.get_deformed_lattice()
+        verts = deformed_mesh.verts_padded()
+        verts = verts + (self.offset_limit * 
+                         torch.tanh(self.global_translation / self.offset_limit))[None, :]
+        global_R = self.generate_rotate_matrix(self.theta)
+        verts = torch.matmul(verts, global_R.T)
+        
+        # translate to the rooftop of the vehicle
+        local_R = self.generate_rotate_matrix(theta)
+        verts = torch.matmul(verts, local_R.T)
+        verts = verts + (pos - self.base_coord)
+        
+        transformed_mesh = deformed_mesh.update_padded(verts)
+        
+        return transformed_mesh
+    
+    def constrain_z_grad(self):
+        self.global_translation.grad[2] = 0.
+        for internal_atom in self.internal_atoms:
+            internal_atom.deform_vert_logit.grad[:, 2] = 0.
+        
+    def generate_rotate_matrix(self, theta:torch.Tensor) -> torch.Tensor:
+        tensor_0 = torch.zeros(1).cuda()
+        RZ = euler_angles_to_matrix(torch.concatenate([tensor_0, tensor_0, theta]), ["X", "Y", "Z"])
+
+        return RZ
     
 class adv_dataset(DatasetTemplate):
     
@@ -291,9 +441,11 @@ class adv_dataset(DatasetTemplate):
                  enable_car:bool = True,
                  enable_ped:bool = False,
                  enable_bicycle:bool = False,
+                 enable_double:bool = False,
                  lidar:LiDAR_base = None,
                  rooftop_approximate: list[np.ndarray] = None,
                  target_class = 1,
+                 cubic_level = 2,
                  car_basic_patch:Meshes = None,
                  ped_basic_patch:Meshes = None,):
         """
@@ -318,6 +470,7 @@ class adv_dataset(DatasetTemplate):
         self.enable_car = enable_car
         self.enable_ped = enable_ped
         self.enable_bicycle = enable_bicycle
+        self.enable_double = enable_double
         
         self.target_class = target_class # 0 for background
         self.surrogate_model = surrogate_model
@@ -334,12 +487,16 @@ class adv_dataset(DatasetTemplate):
                 
             self.logger.info('Successfully loaded rooftop appromximation: %d' % (rooftop_size))
         
-        if car_basic_patch is None:
-            car_basic_patch = self.generate_basic_mesh(
-            scale=self.CAR_ADV_PATCH_SCALE,
-            level=2).cuda()
-        self.universal_adv_patch_car = adversarial_patch_3d(basic_mesh=car_basic_patch,
-            scale=self.CAR_ADV_PATCH_SCALE)
+        
+        self.universal_adv_patch_car = simple_cubic_meshes(cubic_level=cubic_level)
+
+        
+        # if car_basic_patch is None:
+        #     car_basic_patch = self.generate_basic_mesh(
+        #     scale=self.CAR_ADV_PATCH_SCALE,
+        #     level=2).cuda()
+        # self.universal_adv_patch_car = adversarial_patch_3d(basic_mesh=car_basic_patch,
+        #     scale=self.CAR_ADV_PATCH_SCALE)
         
         if ped_basic_patch is None:
             ped_basic_patch = self.generate_basic_mesh(
@@ -356,31 +513,17 @@ class adv_dataset(DatasetTemplate):
     def load_adversarial_parameter(self, path:str):
         input_dict = torch.load(path)
         self.universal_adv_patch_car.load_parameter(input_dict["universal_adv_patch_car"])
-        self.universal_adv_patch_ped.load_parameter(input_dict["universal_adv_patch_ped"])
+        # self.universal_adv_patch_ped.load_parameter(input_dict["universal_adv_patch_ped"])
         
     def save_adversarial_parameter(self, path:str):
         output_dict = {
-            "universal_adv_patch_car" : {
-                "deform_vert":self.universal_adv_patch_car.deform_vert,
-                "theta": self.universal_adv_patch_car.theta,
-                "global_translation": self.universal_adv_patch_car.global_translation,
-            },
-            "universal_adv_patch_ped" : {
-                "deform_vert":self.universal_adv_patch_ped.deform_vert,
-                "theta": self.universal_adv_patch_ped.theta,
-                "global_translation": self.universal_adv_patch_ped.global_translation,
-            },
+            "universal_adv_patch_car" : self.universal_adv_patch_car.get_parameters(),
         }
         
         torch.save(output_dict, path)
     
     def get_adversarial_parameter(self):
-        return [self.universal_adv_patch_car.get_mesh_deform_vert(),
-                self.universal_adv_patch_car.theta,
-                self.universal_adv_patch_car.global_translation,
-                self.universal_adv_patch_ped.get_mesh_deform_vert(),
-                self.universal_adv_patch_ped.theta,
-                self.universal_adv_patch_ped.global_translation]
+        return self.universal_adv_patch_car.get_parameters()
 
     def __getitem__(self, index):
         batch_dict = self.parent_dataset.__getitem__(index)
@@ -535,19 +678,33 @@ class adv_dataset(DatasetTemplate):
                                rooftop_approximate: np.ndarray = None,
                                sample_amount = 50):
         pts_set = [points]
-        
+        meshes_batch = []
         if rooftop_approximate is not None:
             n = rooftop_approximate.shape[0]
             for i in range(n):
                 extend_pts = None
                 if self.lidar is not None:
                     # deformed_mesh = adv_patch.get_transformed_mesh(torch.tensor([10, 0.0, 0.0]).cuda(), theta[i])
-                    deformed_mesh = adv_patch.get_transformed_mesh(torch.from_numpy(rooftop_approximate[i]).float().cuda(), theta[i])
-                    extend_pts = self.lidar.scan_triangles(deformed_mesh).cuda()
+                    if self.enable_double:
+                        transformed_mesh = adv_patch.get_transformed_lattice(torch.from_numpy(rooftop_approximate[i]).float().cuda(),
+                                                                         theta[i])
+
+                        meshes_batch.append(transformed_mesh)
+                    else:
+                        deformed_mesh = adv_patch.get_transformed_mesh(
+                            points.new_tensor([0.0, 0.0, 0.0], requires_grad=False),
+                            torch.from_numpy(rooftop_approximate[i]).float().cuda(), 
+                            theta[i])
+                        meshes_batch.append(deformed_mesh)
+                    
                 else:
                     pts = adv_patch.sample_points(sample_amount=sample_amount).view(-1, 3) - adv_patch.get_base_coord(False)
                     extend_pts = torch.from_numpy(rooftop_approximate[i])[None, :3].float().cuda() + adv_dataset.rotate_points(
                                                             pts, theta[i])
+                    pts_set.append(extend_pts)
+            if meshes_batch.__len__() != 0:
+                meshes_batch = join_meshes_as_batch(meshes_batch)
+                extend_pts = self.lidar.scan_triangles(meshes_batch)
                 pts_set.append(extend_pts)
                 
         return torch.concatenate(pts_set)
@@ -598,9 +755,6 @@ class adv_dataset(DatasetTemplate):
         rotated_points = torch.matmul(points, rotation_matrix.T)
         return rotated_points
     
-    @staticmethod
-    def generate_adv_sample(batch_dict):
-        pass
     
 if __name__ == "__main__":
     CFG_FILE = "./cfgs/kitti_models/pointrcnn.yaml"
