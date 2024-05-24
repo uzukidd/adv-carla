@@ -231,7 +231,7 @@ def save_grad_cache(grad_cache):
 
 
 def whether_eval_init_patch(args, cfg, model, kitti_adv_dataset, logger):
-    if args.EVAL_INIT_PATH:
+    if args.EVAL_INIT_PATCH:
         logger.info("Evaluate the initial patch")
         kitti_adv_dataset.enable_adversarial_patch(True)
         eval_utils.eval_one_epoch(
@@ -267,7 +267,7 @@ def parse_config():
     args.add_argument('--DEVICE', type=int, default=0, help='device')
     args.add_argument('--EVAL_OUTPUT_DIR', type=str, default="./eval_output/", help='evaluation output directory')
     
-    args.add_argument('--cfg-file', type=str, default="configs/attack_configs/relevant_bounding_box_pointrcnn.yaml", help='configuration file')
+    args.add_argument('--cfg-file', type=str, default="configs/attack_configs/relevant_bounding_box_pointpillar.yaml", help='configuration file')
     
     args.add_argument('--BATCH_SIZE', type=int, default=1, help='batch size')
     args.add_argument('--WORKERS', type=int, default=4, help='workers')
@@ -276,7 +276,7 @@ def parse_config():
     args.add_argument('--headbox-attack', action='store_true', help='enable headbox attack')
     args.add_argument('--roihead-attack', action='store_true', help='enable roihead attack')
 
-    args.add_argument('--EVAL_INIT_PATH', action='store_true', help='evaluation initial path')
+    args.add_argument('--EVAL-INIT-PATCH', action='store_true', help='evaluation initial path')
     args.add_argument('--CHECK_GRAD_QUAD', action='store_true', help='check grad quad')
     args.add_argument('--roi-head-weights', type=float, default=1.0, help='roi head weights')
     args.add_argument('--laplacian_weights', type=float, default=0.001, help='laplacian weights')
@@ -348,7 +348,7 @@ if __name__ == "__main__":
     model.cuda()
     model.eval()
 
-    backbone_network, point_headbox, pointrcnn_head = components_of_model(model, logger)
+    components_of_model(model, logger)
 
     ### Prepare the adversarial dataset, which contains get_gradients methods and so forth, and optimizer oriented patch 
     lidar = LiDAR_base(origin=torch.tensor([0.0, 0.0, 0.0]).cuda(),
@@ -372,6 +372,7 @@ if __name__ == "__main__":
     ### Whether to evaluate the initial patch
     whether_eval_init_patch(args, cfg, model, kitti_adv_dataset, logger)
     
+    pdb.set_trace()
     ### Evaluate patch attack with one epoch
     kitti_adv_dataset.save_adversarial_parameter(os.path.join(args.SAVE_PATH, "initial_patch_checkpoint.pt"))
     logger.info(f'Checkpoint has been saved as: \t{os.path.join(args.SAVE_PATH, "initial_patch_checkpoint.pt")}')
