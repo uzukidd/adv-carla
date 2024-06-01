@@ -35,6 +35,8 @@ from pcdet.config import cfg, cfg_from_yaml_file
 from pcdet.datasets import build_dataloader, DatasetTemplate
 from pcdet.models import build_network, load_data_to_gpu
 from pcdet.utils import common_utils
+
+from preprocessing import Data_preprocessor
 from pcdet.datasets.processor.data_processor import DataProcessor
 from pcdet.datasets.processor.point_feature_encoder import PointFeatureEncoder
 
@@ -514,7 +516,8 @@ class adv_dataset(DatasetTemplate):
             self.dataset_cfg.POINT_FEATURE_ENCODING,
             point_cloud_range=self.point_cloud_range
         )
-        self.data_processor = DataProcessor(
+        self.data_processor = Data_preprocessor(
+            self.dataset_cfg.ADVANCED_DATA_PROCESSOR,
             self.dataset_cfg.DATA_PROCESSOR, point_cloud_range=self.point_cloud_range,
             training=self.training, num_point_features=self.point_feature_encoder.num_point_features
         )
@@ -573,14 +576,15 @@ class adv_dataset(DatasetTemplate):
             
         batch_dict = self.collect_all_class_gtbox(batch_dict)
         
-        batch_dict["points"] = batch_dict["points"].detach().cpu().numpy()
+        batch_dict["points"] = batch_dict["points"]
         batch_dict = self.data_processor.forward(
             data_dict=batch_dict
         )
         load_data_to_gpu(batch_dict)
          
         batch_dict = self.gpu_collate_batch([batch_dict])
-                
+        batch_dict['voxels'].requires_grad_(True)
+        
         return batch_dict
     
     def get_gt_boxes_statistic_info(self):

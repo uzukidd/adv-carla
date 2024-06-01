@@ -352,3 +352,136 @@ class relevant_bounding_box_loss(nn.Module):
                     ret_part_loss)
         else:
             raise NotImplementedError
+
+
+class single_relevant_bounding_box_loss(nn.Module):
+    """
+        loss from https://arxiv.org/abs/2004.00543
+    """
+    def __init__(self, frozen_iou: bool = False,
+                 frozen_logit: bool = False,
+                 confidence_threshold: float = 0.1,
+                 iou_threshold: float = 0.1, 
+                 verbose: bool = False):
+        super().__init__()
+        self.frozen_iou = frozen_iou
+        self.frozen_logit = frozen_logit
+        self.confidence_threshold = confidence_threshold
+        self.iou_threshold = iou_threshold
+        self.verbose = verbose
+        
+    def iou3d(self, batch_box_preds:torch.Tensor, 
+                    gt_boxes: torch.Tensor):
+        """
+            Args:
+            - batch_box_preds: [M, 7]
+            - gt_boxes: [N, 7]
+            
+            Return:
+            - iou3d: [M, N]
+        """
+        M = batch_box_preds.size(0)
+        N = gt_boxes.size(0)
+
+        box3d_roi_extended = batch_box_preds.view(M, 1, 7).expand(-1, N, -1)
+        box3d_gt_extended = gt_boxes.view(1, N, 7).expand(M, -1, -1)
+        # iou3d [M, N]
+        iou3d = cal_iou_3d(box3d_roi_extended, box3d_gt_extended)
+        
+        return iou3d
+    
+    def forward_headbox(self, batch_dict, 
+                gt_boxes: torch.Tensor, 
+                target_class: int, 
+                logit_normal:str = 'sigmoid',
+                return_gtbox_id: bool = False,
+                ret_part_loss: bool = False):
+        
+        """
+
+        Args:
+        - batch_cls_preds: [N, 3]
+        - batch_box_preds: [N, 7]
+        - gt_boxes: [1, N, 8]
+        - point_coords: [N, 3]
+        - ret_part_loss: bool
+
+        Returns:
+        - iou_3d: 
+        - assign_idx: 
+        - mesh_loss:
+        """
+        preds_scores:torch.Tensor = batch_dict["pred_scores"] # [N, ]
+        preds_boxes:torch.Tensor = batch_dict["pred_boxes"] # [N, 7]
+        pred_labels:torch.Tensor = batch_dict["pred_labels"].view(-1) # [N, ]
+        
+        gt_boxes, gt_labels = torch.split(gt_boxes.squeeze(dim=0), [7, 1], dim=1)  # [N, 7], [N, 1]
+        gt_boxes = gt_boxes[gt_labels[:, 0] == target_class]
+        gt_labels = gt_labels[gt_labels[:, 0] == target_class]
+        
+        target_class_logit = target_class - 1
+
+        if gt_boxes.size(0) == 0:
+            return torch.zeros([0], requires_grad=True)
+        # assert gt_boxes.size(0), "at leaset one gt box exists."
+        
+        # assign 
+        # batch_cls_preds_normalized = F.softmax(batch_cls_preds, dim=1) # [N, 3]
+        if logit_normal == "sigmoid":
+            cls_preds_normalized = torch.sigmoid(preds_scores) # [N, ]
+        else:
+            raise NotImplementedError
+        
+        classes_mask = (pred_labels == target_class)
+        masked_cls_preds = cls_preds_normalized[classes_mask]
+        masked_box_preds = preds_boxes[classes_mask]
+        
+        confidence_mask = (masked_cls_preds > self.confidence_threshold)
+        masked_cls_preds = masked_cls_preds[confidence_mask]
+        masked_box_preds = masked_box_preds[confidence_mask]
+        
+        if masked_cls_preds.size(0) == 0:
+            return masked_cls_preds.new_zeros(1)
+        
+        iou3d = self.iou3d(masked_box_preds, gt_boxes)
+        
+        masked_cls_preds_extended = masked_cls_preds.unsqueeze(dim=1)
+        masked_cls_preds_extended = masked_cls_preds_extended.expand(-1, iou3d.size(1))
+        masked_cls_preds_extended = masked_cls_preds_extended.contiguous().view(-1)
+        
+        iou3d = iou3d.view(-1)
+        if self.frozen_iou:
+            iou3d = iou3d.detach()
+            
+        if self.frozen_logit:
+            masked_cls_preds_extended = masked_cls_preds_extended.detach()
+        
+        iou_mask = (iou3d > self.iou_threshold)
+        iou3d = iou3d[iou_mask]
+        masked_cls_preds_extended = masked_cls_preds_extended[iou_mask]
+        
+        if masked_cls_preds_extended.size(0) == 0:
+            return masked_cls_preds_extended.new_zeros(1)
+        
+        total_loss = -1.0 * torch.log(1.0 - masked_cls_preds_extended) * iou3d
+        total_loss = total_loss.sum()
+        
+        return total_loss
+        
+    def forward(self, batch_dict, 
+                gt_boxes: torch.Tensor, 
+                target_class: int, 
+                logit_normal:str = 'sigmoid',
+                input_type:str = 'pointpillar',
+                return_gtbox_id: bool = False,
+                ret_part_loss: bool = False):
+        
+        if input_type == "pointpillar":
+            return self.forward_headbox(batch_dict, 
+                gt_boxes, 
+                target_class, 
+                logit_normal,
+                return_gtbox_id,
+                ret_part_loss)
+            
+        raise NotImplementedError

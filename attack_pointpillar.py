@@ -33,7 +33,7 @@ from pcdet.utils import common_utils
 
 from data_tools import adv_dataset, kitti_carla_dataset
 from eval_utils import eval_utils
-from loss_utils import mesh_objectwise_loss, relevant_bounding_box_loss
+from loss_utils import mesh_objectwise_loss, relevant_bounding_box_loss, single_relevant_bounding_box_loss
 from optim_utils import objectwise_deepfool
 
 import pdb
@@ -84,29 +84,15 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
                               verbose_epoch: int = 100,
                               grad_cache = None):
     
-    car_headbox_rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = args.iou_frozen,
-                 frozen_logit = args.logit_frozen,
-                 confidence_threshold = 0.1,
-                 iou_threshold = 0.1, 
-                 verbose = True)
-    
-    car_roihead_rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = args.iou_frozen,
+    car_headbox_rbbox_loss_func = single_relevant_bounding_box_loss(frozen_iou = args.iou_frozen,
                  frozen_logit = args.logit_frozen,
                  confidence_threshold = 0.1,
                  iou_threshold = 0.1, 
                  verbose = True)
 
-    ped_rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = args.iou_frozen,
-                    frozen_logit = args.logit_frozen,
-                    confidence_threshold = 0.1,
-                    iou_threshold = 0.01, 
-                    verbose = True)
-
-    
     kitti_adv_dataset.enable_adversarial_patch(enable_adv)
     
     for i, batch_dict in tqdm(enumerate(kitti_adv_dataset), total=kitti_adv_dataset.__len__()):
-        load_data_to_gpu(batch_dict)
         
         if not torch.eq(batch_dict['gt_boxes'][0, :, 7], 1).any():
             # logger.info(f"no vehicles found in batch \t{i}")
@@ -115,44 +101,17 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
         model.eval()
         model.zero_grad()
         pred_dicts, _ = model(batch_dict)
-        point_headbox_ret_dict = point_headbox.forward_ret_dict
-        pointrcnn_head_ret_dict = pointrcnn_head.forward_ret_dict
-        
-        # if args.CHECK_GRAD_QUAD:
-        #     n_size = batch_dict["gt_boxes"].size(1)
-        #     grad_cache.append([])
-        #     for n_idx_mask in range(n_size):
-        #         mesh_proposal_loss:torch.Tensor = rbbox_loss_func(batch_dict = point_headbox_ret_dict, 
-        #                                 gt_boxes = batch_dict["gt_boxes"][:, n_idx_mask:n_idx_mask+1, :], 
-        #                                 target_class = 1,
-        #                                 logit_normal = "sigmoid",
-        #                                 ret_part_loss = False)
-
-        #         optimizer.zero_grad()
-        #         model.zero_grad()
-        #         if mesh_proposal_loss.requires_grad:
-        #             mesh_proposal_loss.backward(retain_graph = True)
-        #             grad_cache[-1].append([grad.cpu().numpy() for grad in kitti_adv_dataset.universal_adv_patch.get_mesh_gradient()])
             
         if args.OPTIM == "rbboxloss":
             mesh_loss = torch.zeros(1).cuda()
-            if args.headbox_attack:
-                car_mesh_proposal_loss = car_headbox_rbbox_loss_func(batch_dict = point_headbox_ret_dict, 
-                                        gt_boxes = batch_dict["gt_boxes"], 
-                                        target_class = 1,
-                                        logit_normal = "sigmoid",
-                                        input_type = "headbox",
-                                        ret_part_loss = False)
-                mesh_loss = mesh_loss + car_mesh_proposal_loss
-                
-            if args.roihead_attack:
-                car_mesh_roi_loss = car_roihead_rbbox_loss_func(batch_dict = pointrcnn_head_ret_dict, 
-                                        gt_boxes = batch_dict["gt_boxes"], 
-                                        target_class = 1,
-                                        logit_normal = "sigmoid",
-                                        input_type = "roihead",
-                                        ret_part_loss = False)
-                mesh_loss = mesh_loss + args.roi_head_weights * car_mesh_roi_loss
+
+            car_mesh_proposal_loss = car_headbox_rbbox_loss_func(batch_dict = pred_dicts[0], 
+                                    gt_boxes = batch_dict["gt_boxes"], 
+                                    target_class = 1,
+                                    logit_normal = "sigmoid",
+                                    input_type = "pointpillar",
+                                    ret_part_loss = False)
+            mesh_loss = mesh_loss + car_mesh_proposal_loss
                 
             regular_loss = kitti_adv_dataset.universal_adv_patch_car.get_laplacian_loss()
             total_loss = mesh_loss + args.laplacian_weights * regular_loss
@@ -160,30 +119,12 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
             optimizer.zero_grad()
             model.zero_grad()
             total_loss.backward()
-            
-            assert not torch.isnan(total_loss).any()
-            
-            if pointrcnn_head.pooled_features.grad is not None:
-                
-                if torch.isnan(pointrcnn_head.pooled_features.grad).any():
-                    pdb.set_trace()
-            #     xyz_features_grad, batch_point_features_grad = roipooling_grad_mapping(pointrcnn_head.pooled_features.grad, 
-            #                                                                         pointrcnn_head.batch_point_features, 
-            #                                                                         pointrcnn_head.pooled_pts_idx)
-            #     try:
-            #         pointrcnn_head.batch_point_features.backward(batch_point_features_grad, retain_graph = True)
-            #         batch_dict['points'][None, :, 1:4].backward(xyz_features_grad, retain_graph = True)
-            #     except RuntimeError as e:
-            #         pass
 
         else:
             raise NotImplementedError
         
         if verbose_epoch > 0 and i % verbose_epoch == 0:
-            # logger.info(f"deformed verts of mesh: \t{kitti_adv_dataset.universal_adv_patch.get_mesh_deform_vert()}")
-            # vert_grad, translate_grad, theta_grad = kitti_adv_dataset.universal_adv_patch_car.get_mesh_gradient()
-            # logger.info(f"deformed vert gradients of mesh: \t{vert_grad}")
-
+            logger.info(f"gradient of voxel:{batch_dict['voxels'].grad}")
             
             if visualize:
 
@@ -231,9 +172,9 @@ def save_grad_cache(grad_cache):
 
 
 def whether_eval_init_patch(args, cfg, model, kitti_adv_dataset, logger):
-    if args.EVAL_INIT_PATCH:
+    if args.eval_init_patch:
         logger.info("Evaluate the initial patch")
-        kitti_adv_dataset.enable_adversarial_patch(True)
+        kitti_adv_dataset.enable_adversarial_patch(False)
         eval_utils.eval_one_epoch(
                 cfg,
                 args = None,
@@ -253,12 +194,6 @@ def whether_eval_init_patch(args, cfg, model, kitti_adv_dataset, logger):
 def components_of_model(model, logger):
     for idx, module in enumerate(model.module_list):
         logger.info(f'Module names of model \t({idx}): \t{module._get_name()}')
-        
-    backbone_network = model.module_list[0]
-    point_headbox = model.module_list[1]
-    pointrcnn_head = model.module_list[2]
-
-    return backbone_network, point_headbox, pointrcnn_head
 
 def parse_config():
     ### Set hyperparameters, including random seed, device, dataset path, etc.
@@ -276,7 +211,7 @@ def parse_config():
     args.add_argument('--headbox-attack', action='store_true', help='enable headbox attack')
     args.add_argument('--roihead-attack', action='store_true', help='enable roihead attack')
 
-    args.add_argument('--EVAL-INIT-PATCH', action='store_true', help='evaluation initial path')
+    args.add_argument('--eval-init-patch', action='store_true', help='evaluation initial path')
     args.add_argument('--CHECK_GRAD_QUAD', action='store_true', help='check grad quad')
     args.add_argument('--roi-head-weights', type=float, default=1.0, help='roi head weights')
     args.add_argument('--laplacian_weights', type=float, default=0.001, help='laplacian weights')
@@ -372,7 +307,6 @@ if __name__ == "__main__":
     ### Whether to evaluate the initial patch
     whether_eval_init_patch(args, cfg, model, kitti_adv_dataset, logger)
     
-    pdb.set_trace()
     ### Evaluate patch attack with one epoch
     kitti_adv_dataset.save_adversarial_parameter(os.path.join(args.SAVE_PATH, "initial_patch_checkpoint.pt"))
     logger.info(f'Checkpoint has been saved as: \t{os.path.join(args.SAVE_PATH, "initial_patch_checkpoint.pt")}')
