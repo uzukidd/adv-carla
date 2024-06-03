@@ -583,7 +583,10 @@ class adv_dataset(DatasetTemplate):
         load_data_to_gpu(batch_dict)
          
         batch_dict = self.gpu_collate_batch([batch_dict])
-        batch_dict['voxels'].requires_grad_(True)
+        batch_dict['voxel_num_points'] = batch_dict['voxel_num_points'].detach()
+        batch_dict['voxel_coords'] = batch_dict['voxel_coords'].detach()
+        batch_dict['voxels'] = batch_dict['voxels']
+        # batch_dict['voxels'].requires_grad_(True)
         
         return batch_dict
     

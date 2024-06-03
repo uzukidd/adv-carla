@@ -24,6 +24,7 @@ std::vector<at::Tensor> dynamic_point_to_voxel_cpu(
 #ifdef WITH_CUDA
 int hard_voxelize_gpu(const at::Tensor &points, at::Tensor &voxels,
                       at::Tensor &coors, at::Tensor &num_points_per_voxel,
+                      at::Tensor &coor_to_voxelidx, at::Tensor &point_to_voxelidx,
                       const std::vector<float> voxel_size,
                       const std::vector<float> coors_range,
                       const int max_points, const int max_voxels,
@@ -57,6 +58,7 @@ void dynamic_point_to_voxel_backward_gpu(torch::Tensor &grad_feats,
 // Interface for Python
 inline int hard_voxelize(const at::Tensor &points, at::Tensor &voxels,
                          at::Tensor &coors, at::Tensor &num_points_per_voxel,
+                         at::Tensor &coor_to_voxelidx, at::Tensor &point_to_voxelidx,
                          const std::vector<float> voxel_size,
                          const std::vector<float> coors_range,
                          const int max_points, const int max_voxels,
@@ -65,6 +67,7 @@ inline int hard_voxelize(const at::Tensor &points, at::Tensor &voxels,
 #ifdef WITH_CUDA
     if (deterministic) {
       return hard_voxelize_gpu(points, voxels, coors, num_points_per_voxel,
+                               coor_to_voxelidx, point_to_voxelidx, //gradient index
                                voxel_size, coors_range, max_points, max_voxels,
                                NDim);
     }

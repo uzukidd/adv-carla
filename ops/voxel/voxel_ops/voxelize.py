@@ -59,11 +59,18 @@ class _Voxelization(Function):
             coors = points.new_zeros(size=(max_voxels, 3), dtype=torch.int)
             num_points_per_voxel = points.new_zeros(
                 size=(max_voxels, ), dtype=torch.int)
+            
+            point_to_voxelidx = points.new_ones(
+                size=(points.size(0), ), dtype=torch.int) * -1
+            coor_to_voxelidx = points.new_ones(
+                size=(points.size(0), ), dtype=torch.int) * -1
             voxel_num = hard_voxelize(
                 points,
                 voxels,
                 coors,
                 num_points_per_voxel,
+                coor_to_voxelidx,
+                point_to_voxelidx,
                 voxel_size,
                 coors_range,
                 max_points,
@@ -75,7 +82,14 @@ class _Voxelization(Function):
             voxels_out = voxels[:voxel_num]
             coors_out = coors[:voxel_num]
             num_points_per_voxel_out = num_points_per_voxel[:voxel_num]
+            ctx.save_for_backward(point_to_voxelidx, coor_to_voxelidx)
+            ctx.mark_non_differentiable(coors_out, num_points_per_voxel_out)
             return voxels_out, coors_out, num_points_per_voxel_out
+        
+    @staticmethod
+    def backward(ctx, grad_voxels_out, grad_coors_out, grad_num_points_per_voxel_out):
+        (point_to_voxelidx, coor_to_voxelidx) = ctx.saved_tensors
+        return grad_voxels_out[coor_to_voxelidx.long(), point_to_voxelidx.long()], None, None, None, None, None
 
 
 voxelization = _Voxelization.apply

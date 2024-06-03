@@ -230,6 +230,7 @@ namespace voxelization {
 
 int hard_voxelize_gpu(const at::Tensor& points, at::Tensor& voxels,
                       at::Tensor& coors, at::Tensor& num_points_per_voxel,
+                      at::Tensor &coor_to_voxelidx, at::Tensor &point_to_voxelidx,
                       const std::vector<float> voxel_size,
                       const std::vector<float> coors_range,
                       const int max_points, const int max_voxels,
@@ -285,11 +286,11 @@ int hard_voxelize_gpu(const at::Tensor& points, at::Tensor& voxels,
           num_points,
       },
       points.options().dtype(at::kInt));
-  auto point_to_voxelidx = -at::ones(
-      {
-          num_points,
-      },
-      points.options().dtype(at::kInt));
+  // auto point_to_voxelidx = -at::ones(
+  //     {
+  //         num_points,
+  //     },
+  //     points.options().dtype(at::kInt));
 
   dim3 map_grid(std::min(at::cuda::ATenCeilDiv(num_points, 512), 4096));
   dim3 map_block(512);
@@ -307,11 +308,11 @@ int hard_voxelize_gpu(const at::Tensor& points, at::Tensor& voxels,
 
   // 3. determined voxel num and voxel's coor index
   // make the logic in the CUDA device could accelerate about 10 times
-  auto coor_to_voxelidx = -at::ones(
-      {
-          num_points,
-      },
-      points.options().dtype(at::kInt));
+  // auto coor_to_voxelidx = -at::ones(
+  //     {
+  //         num_points,
+  //     },
+  //     points.options().dtype(at::kInt));
   auto voxel_num = at::zeros(
       {
           1,

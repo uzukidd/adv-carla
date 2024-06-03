@@ -124,7 +124,7 @@ def evaluate_one_epoch_attack(args, enable_adv, update, visualize,
             raise NotImplementedError
         
         if verbose_epoch > 0 and i % verbose_epoch == 0:
-            logger.info(f"gradient of voxel:{batch_dict['voxels'].grad}")
+            logger.info(f"gradient:{kitti_adv_dataset.universal_adv_patch_car.get_parameters()[2].grad}")
             
             if visualize:
 
