@@ -1,14 +1,13 @@
-CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+CLASS_NAMES: ['Car']
 
 ATTACK_CONFIG: 
     ROOFTOP_ANNOTATE: "/home/ksas/uzuki_space/vehicle-shape-reconstruction/rooftop_appro_std.pkl"
-    DETECTOR: "single"
+    DETECTOR: "rcnn"
     TARGET_COMPONENT: null
 
 DATA_CONFIG:
     _BASE_CONFIG_: configs/dataset_configs/kitti_dataset.yaml
 
-    POINT_CLOUD_RANGE: [0, -39.68, -3, 69.12, 39.68, 1]
     DATA_PROCESSOR:
         - NAME: mask_points_and_boxes_outside_range
           REMOVE_OUTSIDE_BOXES: True
@@ -20,23 +19,22 @@ DATA_CONFIG:
           }
 
         - NAME: transform_points_to_voxels_placeholder
-          VOXEL_SIZE: [0.16, 0.16, 4]
-          MAX_POINTS_PER_VOXEL: 32
+          VOXEL_SIZE: [0.05, 0.05, 0.1]
+          MAX_POINTS_PER_VOXEL: 5
           MAX_NUMBER_OF_VOXELS: {
             'train': 16000,
             'test': 40000
           }
-
     
     ADVANCED_DATA_PROCESSOR:
-        - NAME: differentiable_voxelize
-          VOXEL_SIZE: [0.16, 0.16, 4]
-          MAX_POINTS_PER_VOXEL: 32
-          MAX_NUMBER_OF_VOXELS: {
-            'train': 16000,
-            'test': 40000
-          }
+      - NAME: differentiable_voxelize
+        VOXEL_SIZE: [0.05, 0.05, 0.1]
+        MAX_POINTS_PER_VOXEL: 5
+        MAX_NUMBER_OF_VOXELS: {
+          'train': 16000,
+          'test': 40000
+        }
 
 MODEL:
-    _BASE_CONFIG_: configs/model_configs/pointpillar.yaml
-    CKPT_PATH: "/home/ksas/Public/model_zoo/pcdet/pointpillar_7728.pth"
+    _BASE_CONFIG_: configs/model_configs/voxel_rcnn_car.yaml
+    CKPT_PATH: "/home/ksas/Public/model_zoo/pcdet/voxel_rcnn_car_84.54.pth"
