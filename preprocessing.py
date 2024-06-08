@@ -12,16 +12,15 @@ class Data_preprocessor(DataProcessor):
         
         self.advanced_processor_configs = advanced_processor_configs
         self.differentiable_voxel_generator = None
-
-        for cur_cfg in advanced_processor_configs:
-            cur_processor = getattr(self, cur_cfg.NAME)(config=cur_cfg)
-            self.data_processor_queue.append(cur_processor)
+        
+        if advanced_processor_configs is not None:
+            for cur_cfg in advanced_processor_configs:
+                cur_processor = getattr(self, cur_cfg.NAME)(config=cur_cfg)
+                self.data_processor_queue.append(cur_processor)
     
     def differentiable_voxelize(self, data_dict=None, config=None):
         if data_dict is None:
             self.voxel_size = config.VOXEL_SIZE
-            # just bind the config, we will create the VoxelGeneratorWrapper later,
-            # to avoid pickling issues in multiprocess spawn
             return partial(self.differentiable_voxelize, config=config)
         
         if self.differentiable_voxel_generator is None:
