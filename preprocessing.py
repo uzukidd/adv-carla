@@ -1,5 +1,7 @@
 import numpy as np
+import torch
 import voxel_ops
+import pdb
 
 from pcdet.datasets.processor.data_processor import DataProcessor
 
@@ -7,8 +9,8 @@ from functools import partial
 
 class Data_preprocessor(DataProcessor):
     
-    def __init__(self, advanced_processor_configs, processor_configs, point_cloud_range, training, num_point_features):
-        super().__init__(processor_configs, point_cloud_range, training, num_point_features)
+    def __init__(self, advanced_processor_configs, point_cloud_range, training, num_point_features):
+        super().__init__([], point_cloud_range, training, num_point_features)
         
         self.advanced_processor_configs = advanced_processor_configs
         self.differentiable_voxel_generator = None
@@ -17,6 +19,16 @@ class Data_preprocessor(DataProcessor):
             for cur_cfg in advanced_processor_configs:
                 cur_processor = getattr(self, cur_cfg.NAME)(config=cur_cfg)
                 self.data_processor_queue.append(cur_processor)
+                
+                
+    def remove_reflective(self, data_dict=None, config=None):
+        if data_dict is None:
+            return partial(self.remove_reflective, config=config)
+        
+        points = data_dict['points'][:, :3]
+        zeros = points.new_zeros((points.size(0), 1))
+        data_dict['points'] = torch.cat((points, zeros), dim=1)
+        return data_dict
     
     def differentiable_voxelize(self, data_dict=None, config=None):
         if data_dict is None:

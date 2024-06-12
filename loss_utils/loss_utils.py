@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import pdb
+import spconv
 
 from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d
 from cudaext.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
@@ -110,7 +111,7 @@ class mesh_objectwise_loss(nn.Module):
             total_loss.append(object_loss.sum())
         
         total_loss = torch.stack(total_loss)
-        
+
         if ret_part_loss:
             return total_loss
         else:
@@ -255,6 +256,10 @@ class relevant_bounding_box_loss(nn.Module):
         batch_cls_preds:torch.Tensor = batch_dict["batch_cls_preds"] # [N, 3]
         batch_box_preds:torch.Tensor = batch_dict["batch_box_preds"] # [N, 7]
         
+        if batch_cls_preds.size().__len__() == 3:
+            batch_cls_preds = batch_cls_preds.view(-1, batch_cls_preds.size(-1))
+            batch_box_preds = batch_box_preds.view(-1, batch_box_preds.size(-1))
+        
         gt_boxes, gt_labels = torch.split(gt_boxes.squeeze(dim=0), [7, 1], dim=1)  # [N, 7], [N, 1]
         gt_boxes = gt_boxes[gt_labels[:, 0] == target_class]
         gt_labels = gt_labels[gt_labels[:, 0] == target_class]
@@ -310,7 +315,7 @@ class relevant_bounding_box_loss(nn.Module):
             return masked_cls_preds_extended.new_zeros(1)
         
         total_loss = -1.0 * torch.log(1.0 - masked_cls_preds_extended[:, target_class_logit]) * iou3d
-        
+
         if return_gtbox_id:
             return total_loss, gtbox_idx, gt_boxes.size(0)
         

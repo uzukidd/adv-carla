@@ -191,13 +191,13 @@ class adv_dataset(DatasetTemplate):
     
     def __init__(self, parent_dataset, 
                  attack_config,
-                 sample_amount = [50, 25], 
                  surrogate_model = None, 
                  enable_car:bool = True,
                  enable_ped:bool = False,
                  enable_bicycle:bool = False,
                  enable_double:bool = False,
                  lidar:LiDAR_base = None,
+                 sample_amount = [50, 25],
                  target_class = 1,):
         """
         Args:
@@ -218,6 +218,7 @@ class adv_dataset(DatasetTemplate):
         self.evaluating = False
         self.enabled_adversarial_patch = True
         self.lidar = lidar
+        self.sample_amount = sample_amount
         
         self.enable_car = enable_car
         self.enable_ped = enable_ped
@@ -226,7 +227,6 @@ class adv_dataset(DatasetTemplate):
         
         self.target_class = target_class # 0 for background
         self.surrogate_model = surrogate_model
-        self.sample_amount = sample_amount
         self.rooftop_approximate = self.load_annotated_rooftop(self.attack_config.ROOFTOP_ANNOTATE)
         
         
@@ -242,22 +242,19 @@ class adv_dataset(DatasetTemplate):
         
         
         self.universal_adv_patch_car = single_sphere(scale=self.CAR_ADV_PATCH_SCALE)
+        # self.universal_adv_patch_car = simple_cubic_lattice(cubic_level = 1,
+        #                                                     scale=self.CAR_ADV_PATCH_SCALE)
         self.universal_adv_patch_ped = single_sphere(scale=self.PED_ADV_PATCH_SCALE)
         
         self.point_cloud_range = np.array(self.dataset_cfg.POINT_CLOUD_RANGE, dtype=np.float32)
-        self.point_feature_encoder = PointFeatureEncoder(
-            self.dataset_cfg.POINT_FEATURE_ENCODING,
-            point_cloud_range=self.point_cloud_range
-        )
         self.data_processor = Data_preprocessor(
-            self.dataset_cfg.ADVANCED_DATA_PROCESSOR,
-            self.dataset_cfg.DATA_PROCESSOR, point_cloud_range=self.point_cloud_range,
-            training=self.training, num_point_features=self.point_feature_encoder.num_point_features
+            self.dataset_cfg.ADVANCED_DATA_PROCESSOR, point_cloud_range=self.point_cloud_range,
+            training=self.training, num_point_features=4
         )
         
         self.detector_type = self.attack_config.DETECTOR
+        self.trainging_components = self.attack_config.TRAINING_COMPONENTS
         self.target_component = self.attack_config.TARGET_COMPONENT
-        # self.logger.info(f"ground truth boxes statistic: {self.get_gt_boxes_statistic_info()}")
 
     def __len__(self):
         return self.parent_dataset.__len__()
@@ -307,9 +304,7 @@ class adv_dataset(DatasetTemplate):
         if self.enabled_adversarial_patch:
             batch_dict=self.prepare_adversarial_data(batch_dict)
             
-        batch_dict = self.collect_all_class_gtbox(batch_dict)
-        
-        batch_dict["points"] = batch_dict["points"]
+        # batch_dict = self.collect_all_class_gtbox(batch_dict)
         batch_dict = self.data_processor.forward(
             data_dict=batch_dict
         )
@@ -372,8 +367,8 @@ class adv_dataset(DatasetTemplate):
         if gt_boxes_bicycle is not None: 
             gt_boxes.append(gt_boxes_bicycle)
             
-        batch_dict['gt_boxes_car'] = torch.concat(gt_boxes, 
-                                                  dim = 0) # [N1 + N2 + N3, 8]
+        # batch_dict['gt_boxes'] = torch.concat(gt_boxes, 
+        #                                           dim = 0) # [N1 + N2 + N3, 8]
         return batch_dict
     
     def prepare_bicycle_gtbox(self, batch_dict):
