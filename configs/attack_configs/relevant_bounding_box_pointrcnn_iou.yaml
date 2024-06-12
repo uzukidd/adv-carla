@@ -29,5 +29,5 @@ DATA_CONFIG:
         -   NAME: remove_reflective
 
 MODEL:
-    _BASE_CONFIG_: configs/model_configs/pointrcnn.yaml
-    CKPT_PATH: "/home/ksas/Public/model_zoo/pcdet/pointrcnn_7870.pth"
+    _BASE_CONFIG_: configs/model_configs/pointrcnn_iou.yaml
+    CKPT_PATH: "/home/ksas/Public/model_zoo/pcdet/pointrcnn_iou_7875.pth"

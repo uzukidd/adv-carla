@@ -4,6 +4,7 @@ ATTACK_CONFIG:
     ROOFTOP_ANNOTATE: "/home/ksas/uzuki_space/vehicle-shape-reconstruction/rooftop_appro_std.pkl"
     DETECTOR: "single"
     TARGET_COMPONENT: null
+    TRAINING_COMPONENTS: []
 
 DATA_CONFIG:
     _BASE_CONFIG_: configs/dataset_configs/kitti_dataset.yaml
@@ -28,7 +29,9 @@ DATA_CONFIG:
           }
 
     
-    ADVANCED_DATA_PROCESSOR:
+    ADVANCED_DATA_PROCESSOR: 
+        - NAME: remove_reflective
+        
         - NAME: differentiable_voxelize
           VOXEL_SIZE: [0.16, 0.16, 4]
           MAX_POINTS_PER_VOXEL: 32

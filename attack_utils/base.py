@@ -46,7 +46,7 @@ class learnable_sphere:
         return basic_mesh.update_padded(deformed_vert.unsqueeze(0))
     
     def get_transformed_meshes(self, translate:torch.Tensor):
-        deformed_meshes = self.deformed_meshes()
+        deformed_meshes = self.get_deformed_meshes()
         verts = deformed_meshes.verts_padded()
         verts = verts + translate[None, :]
         
@@ -128,7 +128,8 @@ class adversarial_patch_3d(ABC):
         return None
     
     def constrain_grad(self):
-        self.global_translation.grad[2] = 0.
+        if self.global_translation.grad is not None:
+            self.global_translation.grad[2] = 0.
         
 
 class single_sphere(adversarial_patch_3d):
@@ -186,7 +187,8 @@ class single_sphere(adversarial_patch_3d):
     
     def constrain_grad(self):
         super().constrain_grad()
-        self.sphere.deform_vert_logit.grad[:, 2] = 0.
+        if self.sphere.deform_vert_logit.grad is not None:
+            self.sphere.deform_vert_logit.grad[:, 2] = 0.
         
     def generate_rotate_matrix(self, theta:torch.Tensor) -> torch.Tensor:
         tensor_0 = torch.zeros(1).cuda()
@@ -255,11 +257,11 @@ class simple_cubic_lattice:
         atoms_meshes = []
         for i in range(self.lattice_grid.size(0)):
             atoms_meshes.append(self.internal_atoms[i].get_transformed_meshes(self.lattice_grid[i]))
-        
+            # atoms_meshes.append(self.internal_atoms[i].get_deformed_meshes())
         atoms_meshes = join_meshes_as_batch(atoms_meshes)
         return atoms_meshes
     
-    def get_transformed_lattice(self, 
+    def get_transformed_meshes(self, 
                                 pos:torch.Tensor,
                                 theta:torch.Tensor) -> Meshes:
         deformed_mesh = self.get_deformed_lattice()

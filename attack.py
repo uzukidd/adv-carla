@@ -94,33 +94,39 @@ def run_one_epoch_attack(args,
 
     dataset.enable_adversarial_patch(enable_adv)
     
+    model.eval()
+    target_component = None
     for idx, module in enumerate(model.module_list):
         if module._get_name() == dataset.target_component:
             target_component = module
+        if module._get_name() in dataset.trainging_components:
+            module.train()
+            
     
     for i, batch_dict in tqdm(enumerate(dataset), total=dataset.__len__()):
-        
         if not torch.eq(batch_dict['gt_boxes'][0, :, 7], 1).any():
             continue
         
-        model.eval()
         model.zero_grad()
         pred_dicts, _ = model(batch_dict)
         
+        attack_dict = None
         if dataset.detector_type == "single":
             attack_dict = pred_dicts[0]
         elif dataset.detector_type == "rcnn":
             attack_dict = target_component.forward_ret_dict
-        
+
         if args.OPTIM == "rbboxloss":
+            mesh_loss = torch.zeros(1).cuda()
+
             car_mesh_proposal_loss = car_headbox_rbbox_loss_func(batch_dict = attack_dict, 
                                     gt_boxes = batch_dict["gt_boxes"], 
                                     target_class = 1,
                                     logit_normal = "sigmoid",
                                     detector_type = dataset.detector_type,
                                     ret_part_loss = False)
-            mesh_loss = car_mesh_proposal_loss
-                
+            mesh_loss = mesh_loss + car_mesh_proposal_loss
+            
             regular_loss = dataset.universal_adv_patch_car.get_regularization_loss()
             total_loss = mesh_loss + args.laplacian_weights * regular_loss
             
@@ -132,13 +138,31 @@ def run_one_epoch_attack(args,
             raise NotImplementedError
         
         if verbose_epoch > 0 and i % verbose_epoch == 0:
-            logger.info(f"gradient:{dataset.universal_adv_patch_car.get_parameters()[2].grad}")
+            # logger.info("-----------------gradient--------------")
+            # logger.info(f"(1):{dataset.universal_adv_patch_car.get_parameters()[0].grad}")
+            # logger.info(f"(2):{dataset.universal_adv_patch_car.get_parameters()[1].grad}")
+            # logger.info(f"(3):{dataset.universal_adv_patch_car.get_parameters()[2].grad}")
+            logger.info("-----------------loss--------------")
+            logger.info(f"total loss:{total_loss.item()}")
+            logger.info(f"mesh loss:{mesh_loss.item()}")
+            logger.info(f"regular loss:{regular_loss.item()}")
+            # logger.info(f"gradient:{dataset.universal_adv_patch_car.get_parameters()[2].grad}")
             
-            if visualize:
+            if args.visualize:
+                try:
+                    import open3d
+                    from visual_utils import open3d_vis_utils as V
+                    OPEN3D_FLAG = True
+                except:
+                    import mayavi.mlab as mlab
+                    from visual_utils import visualize_utils as V
+                    OPEN3D_FLAG = False
                 V.draw_scenes(
                     points=batch_dict['points'][:, 1:], ref_boxes=pred_dicts[0]['pred_boxes'].detach(),
                     ref_scores=pred_dicts[0]['pred_scores'].detach(), ref_labels=pred_dicts[0]['pred_labels'].detach(), gt_boxes=batch_dict['gt_boxes'][0]
                 )
+            
+            # pdb.set_trace()
             
         if update:
             """
@@ -166,6 +190,7 @@ def vis_adv_examples(kitti_adv_dataset):
 
 
 def eval_data(args, cfg, adv_enabled, model, dataset, logger):
+    model.eval()
     dataset.enable_adversarial_patch(adv_enabled)
     eval_utils.eval_one_epoch(
             cfg,
@@ -205,8 +230,8 @@ def parse_config():
     args.add_argument('--eval-init-patch', action='store_true', help='evaluate initial patch (only)')
     args.add_argument('--CHECK_GRAD_QUAD', action='store_true', help='check grad quad')
     args.add_argument('--roi-head-weights', type=float, default=1.0, help='roi head weights')
-    args.add_argument('--laplacian_weights', type=float, default=0.001, help='laplacian weights')
-    args.add_argument('--learning_rate', type=float, default=0.005, help='learning rate')
+    args.add_argument('--laplacian-weights', type=float, default=0.001, help='laplacian weights')
+    args.add_argument('--learning-rate', type=float, default=0.005, help='learning rate')
     args.add_argument('--iou-frozen', action='store_true', help='freeze iou loss while optimization')
     args.add_argument('--logit-frozen', action='store_true', help='freeze logit loss while optimization')
     args.add_argument('--exp-name', type=str, default=str(int(time.time())), help='name of saving folder')
@@ -294,7 +319,6 @@ def main():
                    polar_num=10, azi_res=0.08)
     kitti_adv_dataset = adv_dataset(test_set,
                                     attack_cfg,
-                                    sample_amount=[50, 25],
                                     surrogate_model=None,
                                     lidar = lidar,
                                     enable_car = True,
@@ -343,18 +367,13 @@ def main():
     # vis_adv_examples(kitti_adv_dataset)
 
     ### Evaluate the adversarial examples
-    kitti_adv_dataset.enable_adversarial_patch(True)
-    eval_utils.eval_one_epoch(
-            cfg=cfg,
-            args=None, 
-            model=model, 
-            dataloader=kitti_adv_dataset,
-            epoch_id=0, 
-            logger=logger,
-            dist_test=args.DIST_TEST,
-            result_dir=Path(args.EVAL_OUTPUT_DIR),
-            infer_time=True
-        )
+    logger.info("Evaluate the final patch")
+    eval_data(args = args, 
+            cfg = cfg,
+            adv_enabled = True, 
+            model = model, 
+            dataset = kitti_adv_dataset, 
+            logger = logger)
 
 if __name__ == "__main__":
     main()
