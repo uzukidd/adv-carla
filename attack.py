@@ -9,7 +9,7 @@ import pickle as pkl
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from pathlib import Path
-
+torch.autograd.set_detect_anomaly(True)
 # try:
 #     import open3d
 #     from visual_utils import open3d_vis_utils as V
@@ -36,25 +36,6 @@ import argparse
 import os
 import time
 
-def roipooling_grad_mapping(pooled_features_grad, batch_point_features, pooled_pts_idx):
-    
-    batch_size = batch_point_features.size(0)
-    npoint = batch_point_features.size(1)
-    feature_size = batch_point_features.size(2)
-    
-    batch_point_features_grad = torch.zeros_like(batch_point_features)
-    xyz_features_grad = batch_point_features.new_zeros((batch_size, npoint, 3))
-    
-    for batch_mask in range(0, batch_size):
-        pts_idx_expanded = pooled_pts_idx[batch_mask].view(-1).long().unsqueeze(1).expand(-1, feature_size)
-        xyz_pooled_features_grad_viewed = pooled_features_grad[:, :, :3].view(-1, 3)
-        pooled_features_grad_viewed = pooled_features_grad[:, :, 3:].view(-1, feature_size)
-
-        batch_point_features_grad[batch_mask].scatter_add_(0, pts_idx_expanded, pooled_features_grad_viewed)
-        xyz_features_grad[batch_mask].scatter_add_(0, pts_idx_expanded[:, :3], xyz_pooled_features_grad_viewed)
-    
-    return xyz_features_grad, batch_point_features_grad
-
 def gtbox_wise_cos_compute(mesh_proposal_loss:torch.Tensor, 
                            gtbox_idx:torch.Tensor,
                            gtbox_size:int,
@@ -72,7 +53,83 @@ def gtbox_wise_cos_compute(mesh_proposal_loss:torch.Tensor,
     #     for j in range(gtbox_size - i - 1):
             
     # pdb.set_trace()
+    
+class stage_wise_full_attack(nn.Module):
+    
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+        self.car_rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = args.iou_frozen,
+                 frozen_logit = args.logit_frozen,
+                 confidence_threshold = 0.1,
+                 iou_threshold = 0.1, 
+                 verbose = False)
 
+    
+    def forward(self, gt_boxes, first_dict = None, second_dict = None):
+        mesh_loss = torch.zeros(1, requires_grad=True).cuda()
+        if self.args.headbox_attack:
+            car_mesh_proposal_loss = self.car_rbbox_loss_func(batch_dict = first_dict, 
+                                    gt_boxes = gt_boxes, 
+                                    target_class = 1,
+                                    logit_normal = "sigmoid",
+                                    detector_type = "rcnn",
+                                    ret_part_loss = False)
+            mesh_loss = mesh_loss + car_mesh_proposal_loss
+            
+        if self.args.roihead_attack:
+            car_mesh_single_loss = self.car_rbbox_loss_func(batch_dict = second_dict, 
+                                gt_boxes = gt_boxes, 
+                                target_class = 1,
+                                logit_normal = "sigmoid",
+                                detector_type = "single",
+                                ret_part_loss = False)
+            mesh_loss = mesh_loss + self.args.roi_head_weights * car_mesh_single_loss
+    
+        return mesh_loss
+    
+class loss_wise_full_attack(nn.Module):
+    
+    def __init__(self, args, ):
+        super().__init__()
+        self.args = args
+        self.car_rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = args.iou_frozen,
+                 frozen_logit = args.logit_frozen,
+                 confidence_threshold = 0.1,
+                 iou_threshold = 0.1, 
+                 verbose = False)
+    
+    def forward(self, gt_boxes, first_dict = None, second_dict = None):
+        
+        mesh_loss = None
+        
+        if self.args.mode < 2:
+            iou3d, masked_cls_preds = self.car_rbbox_loss_func(batch_dict = first_dict, 
+                                    gt_boxes = gt_boxes, 
+                                    target_class = 1,
+                                    logit_normal = "sigmoid",
+                                    detector_type = "rcnn",
+                                    ret_part_loss = True)
+            if self.args.mode == 0:
+                mesh_loss = iou3d.sum()
+            elif self.args.mode == 1:
+                mesh_loss = -torch.log(1 - masked_cls_preds).sum()
+
+        elif self.args.mode >= 2:
+            iou3d, masked_cls_preds = self.car_rbbox_loss_func(batch_dict = second_dict, 
+                                gt_boxes = gt_boxes, 
+                                target_class = 1,
+                                logit_normal = "sigmoid",
+                                detector_type = "single",
+                                ret_part_loss = True)
+            if self.args.mode == 2:
+                mesh_loss = iou3d.sum()
+            elif self.args.mode == 3:
+                mesh_loss = -torch.log(1 - masked_cls_preds).sum()
+            
+        return mesh_loss
+
+    
 
 def run_one_epoch_attack(args, 
                          dataset: adv_dataset, 
@@ -83,11 +140,8 @@ def run_one_epoch_attack(args,
                          logger,
                          verbose_epoch: int = 100):
     
-    car_headbox_rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = args.iou_frozen,
-                 frozen_logit = args.logit_frozen,
-                 confidence_threshold = 0.1,
-                 iou_threshold = 0.1, 
-                 verbose = True)
+    adversarial_loss_func = stage_wise_full_attack(args)
+    # adversarial_loss_func = loss_wise_full_attack(args)
     
     optimizer = optim.Adam(dataset.get_adversarial_parameter(), 
                        lr=args.learning_rate)
@@ -117,19 +171,14 @@ def run_one_epoch_attack(args,
             attack_dict = target_component.forward_ret_dict
 
         if args.OPTIM == "rbboxloss":
-            mesh_loss = torch.zeros(1).cuda()
 
-            car_mesh_proposal_loss = car_headbox_rbbox_loss_func(batch_dict = attack_dict, 
-                                    gt_boxes = batch_dict["gt_boxes"], 
-                                    target_class = 1,
-                                    logit_normal = "sigmoid",
-                                    detector_type = dataset.detector_type,
-                                    ret_part_loss = False)
-            mesh_loss = mesh_loss + car_mesh_proposal_loss
+            adversarial_loss = adversarial_loss_func(batch_dict['gt_boxes'],
+                                                    first_dict = attack_dict,
+                                                    second_dict = pred_dicts[0])
             
             regular_loss = dataset.universal_adv_patch_car.get_regularization_loss()
-            total_loss = mesh_loss + args.laplacian_weights * regular_loss
-            
+            total_loss = adversarial_loss + args.laplacian_weights * regular_loss
+
             optimizer.zero_grad()
             model.zero_grad()
             total_loss.backward()
@@ -138,16 +187,16 @@ def run_one_epoch_attack(args,
             raise NotImplementedError
         
         if verbose_epoch > 0 and i % verbose_epoch == 0:
-            # logger.info("-----------------gradient--------------")
-            # logger.info(f"(1):{dataset.universal_adv_patch_car.get_parameters()[0].grad}")
-            # logger.info(f"(2):{dataset.universal_adv_patch_car.get_parameters()[1].grad}")
-            # logger.info(f"(3):{dataset.universal_adv_patch_car.get_parameters()[2].grad}")
             logger.info("-----------------loss--------------")
             logger.info(f"total loss:{total_loss.item()}")
-            logger.info(f"mesh loss:{mesh_loss.item()}")
+            logger.info(f"adversarial loss:{adversarial_loss.item()}")
             logger.info(f"regular loss:{regular_loss.item()}")
-            # logger.info(f"gradient:{dataset.universal_adv_patch_car.get_parameters()[2].grad}")
-            
+            logger.info("-----------------gradient--------------")
+            logger.info(f"(1):{dataset.universal_adv_patch_car.get_parameters()[0].grad}")
+            logger.info(f"(2):{dataset.universal_adv_patch_car.get_parameters()[1].grad}")
+            logger.info(f"(3):{dataset.universal_adv_patch_car.get_parameters()[2].grad}")
+
+            pdb.set_trace()
             if args.visualize:
                 try:
                     import open3d
@@ -162,7 +211,7 @@ def run_one_epoch_attack(args,
                     ref_scores=pred_dicts[0]['pred_scores'].detach(), ref_labels=pred_dicts[0]['pred_labels'].detach(), gt_boxes=batch_dict['gt_boxes'][0]
                 )
             
-            # pdb.set_trace()
+            
             
         if update:
             """
@@ -214,7 +263,7 @@ def parse_config():
     ### Set hyperparameters, including random seed, device, dataset path, etc.
     args = argparse.ArgumentParser(description='KITTI Attack Test')
     args.add_argument('--UNI_RANDOM_SEED', type=int, default=2024, help='random seed')
-    args.add_argument('--DEVICE', type=int, default=0, help='device')
+    args.add_argument('--device', type=int, default=0, help='device')
     args.add_argument('--EVAL_OUTPUT_DIR', type=str, default="./eval_output/", help='evaluation output directory')
     
     args.add_argument('--cfg-file', type=str, default="configs/attack_configs/relevant_bounding_box_pointpillar.yaml", help='configuration file')
@@ -232,11 +281,15 @@ def parse_config():
     args.add_argument('--roi-head-weights', type=float, default=1.0, help='roi head weights')
     args.add_argument('--laplacian-weights', type=float, default=0.001, help='laplacian weights')
     args.add_argument('--learning-rate', type=float, default=0.005, help='learning rate')
+    args.add_argument('--scale', nargs='*', help='Scale of Patch')
+    args.add_argument('--level', type=int, default=2, help='level of Patch')
     args.add_argument('--iou-frozen', action='store_true', help='freeze iou loss while optimization')
     args.add_argument('--logit-frozen', action='store_true', help='freeze logit loss while optimization')
     args.add_argument('--exp-name', type=str, default=str(int(time.time())), help='name of saving folder')
     args.add_argument('--verbose-epoch', type=int, default=-1, help='verbose per epoch')
     args.add_argument('--visualize', action='store_true')
+    
+    args.add_argument('--mode', type=int, default=0)
 
 
     args = args.parse_args()
@@ -256,21 +309,12 @@ def set_seed_and_device(args):
     torch.cuda.manual_seed(args.UNI_RANDOM_SEED)
     torch.cuda.manual_seed_all(args.UNI_RANDOM_SEED)
 
-    torch.cuda.set_device(args.DEVICE)
+    torch.cuda.set_device(args.device)
 
 
 def main():
     ### Setting the parameters and logger
     args, cfg = parse_config()
-    if args.visualize:
-        try:
-            import open3d
-            from visual_utils import open3d_vis_utils as V
-            OPEN3D_FLAG = True
-        except:
-            import mayavi.mlab as mlab
-            from visual_utils import visualize_utils as V
-            OPEN3D_FLAG = False
     
     dataset_cfg = cfg.DATA_CONFIG
     model_cfg = cfg.MODEL
@@ -324,6 +368,8 @@ def main():
                                     enable_car = True,
                                     enable_ped = False,
                                     enable_bicycle = False,
+                                    car_adv_patch_scale = args.scale,
+                                    car_adv_patch_level = args.level,
                                     )
     logger.info(f"parameter length:\t{kitti_adv_dataset.get_adversarial_parameter().__len__()}")
 

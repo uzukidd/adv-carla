@@ -90,13 +90,13 @@ class adversarial_patch_3d(ABC):
     
     def __init__(self, scale:list=[0.7, 0.7, 0.5],
                     eps = 0.0):
-        self.scale = np.array(scale)
+        self.scale = np.array(scale, dtype=np.float32)
         
         self.offset_limit: torch.Tensor = torch.tensor([0.1]).cuda()
         self.global_translation: torch.Tensor = torch.tensor([0.0, 0.0, 0.0]).cuda()
         self.global_translation.requires_grad_(True)
         
-        self.base_coord: torch.Tensor = torch.tensor([0.0, 0.0, -scale[2]]).float().cuda()
+        self.base_coord: torch.Tensor = torch.tensor([0.0, 0.0, -self.scale[2]]).float().cuda()
         
         self.theta: torch.Tensor = torch.tensor([0.0]).cuda()
         self.theta.requires_grad_(True)
@@ -135,11 +135,13 @@ class adversarial_patch_3d(ABC):
 class single_sphere(adversarial_patch_3d):
     
     def __init__(self, scale:list=[0.7, 0.7, 0.5],
+                    level:int = 2,
                     eps = 0.0):
         super().__init__(scale=scale,
                          eps=eps)
         
         self.sphere = learnable_sphere(scale = self.scale, 
+                                       level = level,
                                        eps = eps)
             
     def get_regularization_loss(self):

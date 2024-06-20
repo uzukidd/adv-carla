@@ -30,6 +30,46 @@ class Data_preprocessor(DataProcessor):
         data_dict['points'] = torch.cat((points, zeros), dim=1)
         return data_dict
     
+    def sample_points_gpu(self, data_dict=None, config=None):
+        if data_dict is None:
+            return partial(self.sample_points_gpu, config=config)
+
+        num_points = config.NUM_POINTS[self.mode]
+        if num_points == -1:
+            return data_dict
+
+        points = data_dict['points']
+        if num_points < points.size(0):
+            pts_depth = torch.linalg.norm(points[:, 0:3], dim=1)
+            pts_near_flag = pts_depth < 40.0
+            far_idxs_choice = torch.where(~pts_near_flag)[0]
+            near_idxs = torch.where(pts_near_flag)[0]
+            choice = []
+            if num_points > far_idxs_choice.size(0):
+                near_idxs_choice = torch.randperm(near_idxs.size(0))[:num_points - far_idxs_choice.size(0)]
+                near_idxs_choice = near_idxs[near_idxs_choice]
+                
+                # near_idxs_choice = np.random.choice(near_idxs, num_points - len(far_idxs_choice), replace=False)
+                choice = torch.concatenate((near_idxs_choice, far_idxs_choice), dim=0) \
+                    if far_idxs_choice.size(0) > 0 else near_idxs_choice
+                choice = choice[torch.randperm(choice.size(0))]
+            else: 
+                # choice = np.arange(0, len(points), dtype=np.int32)
+                # choice = np.random.choice(choice, num_points, replace=False)
+                choice = torch.randperm(points.size(0))[:num_points]
+            
+        else:
+            choice = torch.arange(0, points.size(0))
+            if num_points > points.size(0):
+                # extra_choice = np.random.choice(choice, num_points - len(points), replace=False)
+                extra_choice = torch.randperm(points.size(0))[:num_points - points.size(0)]
+                choice = torch.concatenate((choice, extra_choice), dim=0)
+            # np.random.shuffle(choice)
+            choice = choice[torch.randperm(choice.size(0))]
+            
+        data_dict['points'] = points[choice]
+        return data_dict
+    
     def differentiable_voxelize(self, data_dict=None, config=None):
         if data_dict is None:
             self.voxel_size = config.VOXEL_SIZE
