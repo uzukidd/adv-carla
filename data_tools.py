@@ -197,6 +197,8 @@ class adv_dataset(DatasetTemplate):
                  enable_bicycle:bool = False,
                  enable_double:bool = False,
                  lidar:LiDAR_base = None,
+                 car_adv_patch_scale:list[float] = None,
+                 car_adv_patch_level:int = 2,
                  sample_amount = [50, 25],
                  target_class = 1,):
         """
@@ -224,10 +226,16 @@ class adv_dataset(DatasetTemplate):
         self.enable_ped = enable_ped
         self.enable_bicycle = enable_bicycle
         self.enable_double = enable_double
+        self.car_adv_patch_level = car_adv_patch_level
         
         self.target_class = target_class # 0 for background
         self.surrogate_model = surrogate_model
         self.rooftop_approximate = self.load_annotated_rooftop(self.attack_config.ROOFTOP_ANNOTATE)
+        
+        self.car_adv_patch_scale = car_adv_patch_scale
+        if car_adv_patch_scale is None:
+            self.car_adv_patch_scale = self.CAR_ADV_PATCH_SCALE
+        assert self.car_adv_patch_scale.__len__() == 3
         
         
         if self.logger is not None:
@@ -241,7 +249,8 @@ class adv_dataset(DatasetTemplate):
             self.logger.info('Successfully loaded rooftop appromximation: %d' % (rooftop_size))
         
         
-        self.universal_adv_patch_car = single_sphere(scale=self.CAR_ADV_PATCH_SCALE)
+        self.universal_adv_patch_car = single_sphere(scale=self.car_adv_patch_scale,
+                                                     level=self.car_adv_patch_level)
         # self.universal_adv_patch_car = simple_cubic_lattice(cubic_level = 1,
         #                                                     scale=self.CAR_ADV_PATCH_SCALE)
         self.universal_adv_patch_ped = single_sphere(scale=self.PED_ADV_PATCH_SCALE)
@@ -311,6 +320,7 @@ class adv_dataset(DatasetTemplate):
         load_data_to_gpu(batch_dict)
          
         batch_dict = self.gpu_collate_batch([batch_dict])
+        
         
         return batch_dict
     
@@ -632,28 +642,28 @@ if __name__ == "__main__":
     dataset = kitti_carla_dataset(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, training=False,
         root_path=Path(DATA_PATH), ext=".ply", logger=logger)
     
+    sample = dataset[0]
+    # BATCH_SIZE = 1
+    # WORKERS = 4
+    # DIST_TEST = False
+    # CFG_FILE = "./cfgs/kitti_models/pointrcnn.yaml"
+    # cfg_from_yaml_file(CFG_FILE, cfg)
     
-    BATCH_SIZE = 1
-    WORKERS = 4
-    DIST_TEST = False
-    CFG_FILE = "./cfgs/kitti_models/pointrcnn.yaml"
-    cfg_from_yaml_file(CFG_FILE, cfg)
-    
-    kitti_test_set, kitti_test_loader, sampler = build_dataloader(
-        dataset_cfg=cfg.DATA_CONFIG,
-        class_names=cfg.CLASS_NAMES,
-        batch_size=BATCH_SIZE,
-        dist=DIST_TEST, workers=WORKERS, logger=logger, training=False
-    )
-    logger.info(f'Class names of samples: \t{kitti_test_set.class_names}')
+    # kitti_test_set, kitti_test_loader, sampler = build_dataloader(
+    #     dataset_cfg=cfg.DATA_CONFIG,
+    #     class_names=cfg.CLASS_NAMES,
+    #     batch_size=BATCH_SIZE,
+    #     dist=DIST_TEST, workers=WORKERS, logger=logger, training=False
+    # )
+    # logger.info(f'Class names of samples: \t{kitti_test_set.class_names}')
 
-    test_adv_dataset = adv_dataset(kitti_test_set)
-    data_dict = test_adv_dataset[0]
-    logger.info(f"The keys of data_dict:\t{data_dict.keys()}") # [1, N, 3]
-    logger.info(f"The size of sampled points:\t{test_adv_dataset.universal_adv_patch.sample_points(50).size()}") # [1, N, 3]
-    logger.info(f"data_dict['points']:\t{data_dict['points'].size()}")
-    logger.info(f"data_dict['gt_boxes']:\t{data_dict['gt_boxes'].size()}")
+    # test_adv_dataset = adv_dataset(kitti_test_set)
+    # data_dict = test_adv_dataset[0]
+    # logger.info(f"The keys of data_dict:\t{data_dict.keys()}") # [1, N, 3]
+    # logger.info(f"The size of sampled points:\t{test_adv_dataset.universal_adv_patch.sample_points(50).size()}") # [1, N, 3]
+    # logger.info(f"data_dict['points']:\t{data_dict['points'].size()}")
+    # logger.info(f"data_dict['gt_boxes']:\t{data_dict['gt_boxes'].size()}")
         
-    V.draw_scenes(
-        points=data_dict['points'][:, 1:], gt_boxes=data_dict['gt_boxes'][0]
-    )
+    # V.draw_scenes(
+    #     points=data_dict['points'][:, 1:], gt_boxes=data_dict['gt_boxes'][0]
+    # )
