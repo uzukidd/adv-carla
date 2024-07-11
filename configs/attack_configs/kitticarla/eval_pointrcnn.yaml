@@ -1,0 +1,33 @@
+CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+
+ATTACK_CONFIG: 
+    ROOFTOP_ANNOTATE: "data/rooftop_approximation/kitti_carla_pointrcnn.pkl"
+    ADVERSARIAL_PATCH: "output/train/pointrcnn_full_attack/final_adversarial_patch_checkpoint.pt"
+    DETECTOR: "rcnn"
+    TARGET_COMPONENT: "PointHeadBox"
+    TRAINING_COMPONENTS: []
+
+DATA_CONFIG:
+    _BASE_CONFIG_: configs/dataset_configs/kitti_carla_dataset.yaml
+    GTBOXES: "data/gtound truth/gtboxes_pointrcnn.pt"
+    DATA_PROCESSOR:
+        -   NAME: mask_points_and_boxes_outside_range
+            REMOVE_OUTSIDE_BOXES: True
+
+        -   NAME: shuffle_points
+            SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+            }
+    
+    ADVANCED_DATA_PROCESSOR: 
+        -   NAME: remove_reflective
+        -   NAME: sample_points_gpu
+            NUM_POINTS: {
+                'train': 16384,
+                'test': 16384
+            }
+
+MODEL:
+    _BASE_CONFIG_: configs/model_configs/pointrcnn.yaml
+    CKPT_PATH: "/home/ksas/Public/model_zoo/pcdet/pointrcnn_7870.pth"

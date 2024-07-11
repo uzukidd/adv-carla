@@ -4,6 +4,7 @@ test_playground.ipynb
 check_grad.pkl
 output/
 cfgs/
+data/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

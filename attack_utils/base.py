@@ -10,7 +10,29 @@ from pytorch3d.transforms import euler_angles_to_matrix
 
 from abc import ABC, abstractmethod
 
+class learnable_cube:
+    CUBE_VERTEICE = torch.tensor([
+        [-1, -1, -1],  # 0
+        [-1, -1,  1],  # 1
+        [-1,  1, -1],  # 2
+        [-1,  1,  1],  # 3
+        [ 1, -1, -1],  # 4
+        [ 1, -1,  1],  # 5
+        [ 1,  1, -1],  # 6
+        [ 1,  1,  1]   # 7
+    ], dtype=torch.float32)
 
+    # 定义立方体的面（由顶点索引组成的三角形）
+    CUBE_FACES = torch.tensor([
+        [0, 1, 2], [1, 3, 2],  # 左面
+        [4, 6, 5], [5, 6, 7],  # 右面
+        [0, 4, 1], [1, 4, 5],  # 底面
+        [2, 3, 6], [3, 7, 6],  # 顶面
+        [0, 2, 4], [2, 6, 4],  # 后面
+        [1, 5, 3], [3, 5, 7]   # 前面
+    ], dtype=torch.int64)
+    def __init__(self) -> None:
+        pass
 
 class learnable_sphere:
     
@@ -37,16 +59,19 @@ class learnable_sphere:
     def get_basic_meshes(self) -> Meshes:
         return self.basic_mesh
     
-    def get_deformed_meshes(self) -> Meshes:
+    def get_deformed_meshes(self, deform_vert_logit:torch.Tensor = None) -> Meshes:
         basic_mesh = self.get_basic_meshes()
+        if deform_vert_logit is None:
+            deform_vert_logit = self.deform_vert_logit
+            
         deformed_vert = self.scale[None, :] \
-            * self.init_vert_quadrant \
-            * torch.sigmoid(self.init_vert_logit + self.deform_vert_logit)
+                * self.init_vert_quadrant \
+                * torch.sigmoid(self.init_vert_logit + deform_vert_logit)
 
         return basic_mesh.update_padded(deformed_vert.unsqueeze(0))
     
-    def get_transformed_meshes(self, translate:torch.Tensor):
-        deformed_meshes = self.get_deformed_meshes()
+    def get_transformed_meshes(self, translate:torch.Tensor, deform_vert_logit:torch.Tensor = None):
+        deformed_meshes = self.get_deformed_meshes(deform_vert_logit = deform_vert_logit)
         verts = deformed_meshes.verts_padded()
         verts = verts + translate[None, :]
         
@@ -106,8 +131,10 @@ class adversarial_patch_3d(ABC):
         return parameters
     
     def load_parameter(self, parameters:list) -> None:
-        self.global_translation = parameters[0]
-        self.theta = parameters[1]
+        self.global_translation = parameters[0].clone().detach().to(self.global_translation.device)
+        self.theta = parameters[1].clone().detach().to(self.theta.device)
+        self.global_translation.requires_grad_(True)
+        self.theta.requires_grad_(True)
         
     @abstractmethod
     def get_basic_meshes(self) -> Meshes:
@@ -120,7 +147,8 @@ class adversarial_patch_3d(ABC):
     @abstractmethod
     def get_transformed_meshes(self, 
                                 pos:torch.Tensor,
-                                theta:torch.Tensor) -> Meshes:
+                                theta:torch.Tensor,
+                                adversarial_parameters:list[torch.Tensor]) -> Meshes:
         return None
     
     @abstractmethod
@@ -155,27 +183,41 @@ class single_sphere(adversarial_patch_3d):
     
     def load_parameter(self, parameters:list):
         super().load_parameter(parameters)
-        self.sphere.deform_vert_logit = parameters[2]
+        self.sphere.deform_vert_logit = parameters[2].clone().detach().to(self.sphere.deform_vert_logit.device)
+        self.sphere.deform_vert_logit.requires_grad_(True)
         
     def get_basic_meshes(self) -> Meshes:
         return self.sphere.get_basic_meshes()
 
-    def get_deformed_meshes(self) -> Meshes:
-        return self.sphere.get_deformed_meshes()
+    def get_deformed_meshes(self,
+                            deform_vert_logit:torch.Tensor = None,) -> Meshes:
+        return self.sphere.get_deformed_meshes(deform_vert_logit = deform_vert_logit)
     
     def get_transformed_meshes(self, 
                                 pos:torch.Tensor,
-                                theta:torch.Tensor) -> Meshes:
+                                theta:torch.Tensor,
+                                adversarial_parameters:torch.Tensor = None,) -> Meshes:
         """
         Args:
             pos: [3,]
             theta: [1,]
         """
-        deformed_mesh = self.get_deformed_meshes()
+
+        deform_vert_logit = None
+        global_translation = self.global_translation
+        global_theta = self.theta
+        if adversarial_parameters is not None:
+
+            global_translation = adversarial_parameters[0]
+            global_theta = adversarial_parameters[1]
+            deform_vert_logit = adversarial_parameters[2]
+            
+            
+        deformed_mesh = self.get_deformed_meshes(deform_vert_logit = deform_vert_logit)
         verts = deformed_mesh.verts_padded()
         verts = verts + (self.offset_limit * 
-                         torch.tanh(self.global_translation / self.offset_limit))[None, :]
-        global_R = self.generate_rotate_matrix(self.theta)
+                         torch.tanh(global_translation / self.offset_limit))[None, :]
+        global_R = self.generate_rotate_matrix(global_theta)
         verts = torch.matmul(verts, global_R.T)
         
         # translate to the rooftop of the vehicle
