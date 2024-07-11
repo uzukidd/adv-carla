@@ -1,0 +1,42 @@
+CLASS_NAMES: ['Car']
+
+ATTACK_CONFIG: 
+    ROOFTOP_ANNOTATE: "data/rooftop_approximation/rooftop_appro_kitti.pkl"
+    DETECTOR: "rcnn"
+    TARGET_COMPONENT: AnchorHeadSingle
+    TRAINING_COMPONENTS: [VoxelBackBone8x]
+
+DATA_CONFIG:
+    _BASE_CONFIG_: configs/dataset_configs/kitti_dataset.yaml
+
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+        - NAME: transform_points_to_voxels_placeholder
+          VOXEL_SIZE: [0.05, 0.05, 0.1]
+          MAX_POINTS_PER_VOXEL: 5
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 16000,
+            'test': 40000
+          }
+    
+    ADVANCED_DATA_PROCESSOR:
+      - NAME: remove_reflective
+      - NAME: differentiable_voxelize
+        VOXEL_SIZE: [0.05, 0.05, 0.1]
+        MAX_POINTS_PER_VOXEL: 5
+        MAX_NUMBER_OF_VOXELS: {
+          'train': 16000,
+          'test': 40000
+        }
+
+MODEL:
+    _BASE_CONFIG_: configs/model_configs/voxel_rcnn_car.yaml
+    CKPT_PATH: "/home/ksas/Public/model_zoo/pcdet/voxel_rcnn_car_84.54.pth"

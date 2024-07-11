@@ -113,7 +113,9 @@ class loss_wise_full_attack(nn.Module):
             if self.args.mode == 0:
                 mesh_loss = iou3d.sum()
             elif self.args.mode == 1:
-                mesh_loss = -torch.log(1 - masked_cls_preds).sum()
+                mesh_loss = masked_cls_preds.sum()
+            elif self.args.mode == -1:
+                mesh_loss = -1.0 * torch.log(1.0 - masked_cls_preds).sum()
 
         elif self.args.mode >= 2:
             iou3d, masked_cls_preds = self.car_rbbox_loss_func(batch_dict = second_dict, 
@@ -125,7 +127,7 @@ class loss_wise_full_attack(nn.Module):
             if self.args.mode == 2:
                 mesh_loss = iou3d.sum()
             elif self.args.mode == 3:
-                mesh_loss = -torch.log(1 - masked_cls_preds).sum()
+                mesh_loss = masked_cls_preds.sum()
             
         return mesh_loss
 
@@ -158,6 +160,8 @@ def run_one_epoch_attack(args,
             
     
     for i, batch_dict in tqdm(enumerate(dataset), total=dataset.__len__()):
+        # import random
+        # batch_dict = dataset.__getitem__(240)
         if not torch.eq(batch_dict['gt_boxes'][0, :, 7], 1).any():
             continue
         
@@ -171,7 +175,6 @@ def run_one_epoch_attack(args,
             attack_dict = target_component.forward_ret_dict
 
         if args.OPTIM == "rbboxloss":
-
             adversarial_loss = adversarial_loss_func(batch_dict['gt_boxes'],
                                                     first_dict = attack_dict,
                                                     second_dict = pred_dicts[0])
@@ -196,8 +199,9 @@ def run_one_epoch_attack(args,
             logger.info(f"(2):{dataset.universal_adv_patch_car.get_parameters()[1].grad}")
             logger.info(f"(3):{dataset.universal_adv_patch_car.get_parameters()[2].grad}")
 
-            pdb.set_trace()
+            
             if args.visualize:
+
                 try:
                     import open3d
                     from visual_utils import open3d_vis_utils as V
@@ -210,7 +214,8 @@ def run_one_epoch_attack(args,
                     points=batch_dict['points'][:, 1:], ref_boxes=pred_dicts[0]['pred_boxes'].detach(),
                     ref_scores=pred_dicts[0]['pred_scores'].detach(), ref_labels=pred_dicts[0]['pred_labels'].detach(), gt_boxes=batch_dict['gt_boxes'][0]
                 )
-            
+            else:
+                pdb.set_trace()
             
             
         if update:

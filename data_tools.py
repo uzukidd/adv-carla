@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from tqdm import tqdm
 import pickle as pkl
 import pdb
 import glob
@@ -23,13 +24,15 @@ from pytorch3d.vis.plotly_vis import AxisArgs, plot_batch_individually, plot_sce
 from cudaext.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
 
 from pcdet.config import cfg, cfg_from_yaml_file
-from pcdet.datasets import build_dataloader, DatasetTemplate
+from pcdet.datasets import build_dataloader, DatasetTemplate, KittiDataset
 from pcdet.models import build_network, load_data_to_gpu
 from pcdet.utils import common_utils
 
 from preprocessing import Data_preprocessor
 from pcdet.datasets.processor.data_processor import DataProcessor
 from pcdet.datasets.processor.point_feature_encoder import PointFeatureEncoder
+
+from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d, cal_iou
 
 from attack_utils import *
 
@@ -138,9 +141,9 @@ class kitti_carla_dataset(DatasetTemplate):
     def __init__(self, dataset_cfg, 
                  class_names, 
                  training=True, 
-                 root_path=None, 
                  map_name="", 
-                 logger=None, ext='.ply'):
+                 logger=None, 
+                 ext='.ply'):
         """
         Args:
             root_path:
@@ -150,14 +153,60 @@ class kitti_carla_dataset(DatasetTemplate):
             logger:
         """
         super().__init__(
-            dataset_cfg=dataset_cfg, class_names=class_names, training=training, root_path=root_path, logger=logger
+            dataset_cfg=dataset_cfg, class_names=class_names, training=training, logger=logger
         )
         self.ext = ext
-        self.frames_path = self.root_path / Path("generated/frames")
+        self.frames_path = Path(dataset_cfg.DATA_PATH) / Path("generated/frames")
         self.frames = sorted(glob.glob(str(self.frames_path) + f"/frame*{self.ext}"))
+        self.gtboxes = None
+        
+        if dataset_cfg.GTBOXES is not None:
+            self.gtboxes = torch.load(dataset_cfg.GTBOXES)
         
         if self.logger is not None:
             self.logger.info('Total samples for KITTI-CARLA dataset: %d' % (len(self)))
+            
+    def evaluation(self, det_annos, class_names, **kwargs):
+        assert self.gtboxes is not None
+        recall_BEV = 0
+        recall_3D = 0
+        
+        gt_boxes_count = 0
+        for i, det_anno in enumerate(det_annos):
+            gt_boxes = self.gtboxes[i]
+            gt_boxes, gt_labels = torch.split(gt_boxes, [7, 1], dim=1)
+            gt_boxes = gt_boxes[gt_labels.view(-1) == 1]
+            
+            pred_labels = torch.from_numpy(det_anno["pred_labels"]).to(gt_boxes.device)
+            score = torch.from_numpy(det_anno["score"]).to(gt_boxes.device)
+            boxes_lidar = torch.from_numpy(det_anno["boxes_lidar"]).to(gt_boxes.device)
+            boxes_lidar = boxes_lidar[pred_labels == 1]
+            
+            M = gt_boxes.size(0)
+            N = boxes_lidar.size(0)
+            gt_boxes_count += M
+            
+            if M == 0 or N == 0:
+                continue
+
+            box3d_gt_extended = gt_boxes.view(M, 1, 7).expand(-1, N, -1)
+            box3d_bl_extended = boxes_lidar.view(1, N, 7).expand(M, -1, -1)
+            # iou3d [M, N]
+            iou2d, _, _, _ = cal_iou(box3d_gt_extended[..., [0, 1, 3, 4, 6]], box3d_bl_extended[..., [0, 1, 3, 4, 6]])
+            iou3d = cal_iou_3d(box3d_gt_extended, box3d_bl_extended)
+
+            recall_BEV += (iou2d >= 0.7).sum().item()
+            recall_3D += (iou3d >= 0.7).sum().item()
+            
+        
+        recall_BEV = recall_BEV/gt_boxes_count
+        recall_3D = recall_3D/gt_boxes_count
+        
+        result_str = f"""
+        Car BEV@0.7\t{recall_BEV}
+        Car 3D@0.7\t{recall_3D}
+        """
+        return result_str, {"recall_BEV":recall_BEV, "recall_3D":recall_3D}
 
     def __len__(self):
         return len(self.frames)
@@ -181,8 +230,12 @@ class kitti_carla_dataset(DatasetTemplate):
 
         data_dict = self.prepare_data(data_dict=input_dict)
         
+        if self.gtboxes is not None:
+            input_dict["gt_boxes"] = self.gtboxes[index]
+        
         return data_dict
     
+
     
 class adv_dataset(DatasetTemplate):
     
@@ -221,6 +274,7 @@ class adv_dataset(DatasetTemplate):
         self.enabled_adversarial_patch = True
         self.lidar = lidar
         self.sample_amount = sample_amount
+        self.gtboxes = None
         
         self.enable_car = enable_car
         self.enable_ped = enable_ped
@@ -268,7 +322,8 @@ class adv_dataset(DatasetTemplate):
     def __len__(self):
         return self.parent_dataset.__len__()
 
-    def load_annotated_rooftop(self, ROOFTOP_ANNOTATE):
+    def load_annotated_rooftop(self, 
+                               ROOFTOP_ANNOTATE):
         rooftop_approximate = None
         try:
             with open(ROOFTOP_ANNOTATE, "rb") as input:
@@ -279,6 +334,48 @@ class adv_dataset(DatasetTemplate):
             self.logger.info(error.__str__())
         
         return rooftop_approximate
+    
+    def load_gtboxes(self,
+                     path):
+        self.gtboxes = torch.load(path)
+    
+    def prepare_predicted_gtboxes(self, 
+                                  path:str = None):
+        self.gtboxes = []
+        target_amount = 0
+        assert self.surrogate_model is not None
+        
+        self.enable_adversarial_patch(False)
+        with tqdm(self, 
+                  desc="Inferencing...", 
+                  postfix={"Target detected": 0},) as pbar:
+            
+            for batch_dict in pbar:
+                self.surrogate_model.eval()
+                pred_dicts, _ = self.surrogate_model(batch_dict)
+                
+                preds_scores:torch.Tensor = pred_dicts[0]["pred_scores"] # [N, ]
+                preds_boxes:torch.Tensor = pred_dicts[0]["pred_boxes"] # [N, 7]
+                pred_labels:torch.Tensor = pred_dicts[0]["pred_labels"].view(-1) # [N, ]
+                
+                score_mask = preds_scores >= 0.5
+                pred_labels = pred_labels[score_mask].detach().view(-1, 1)
+                preds_boxes = preds_boxes[score_mask].detach()
+                
+                gtbox = torch.cat((preds_boxes, pred_labels), dim=1)
+                
+                self.gtboxes.append(gtbox)
+                
+                target_amount += gtbox.size(0)
+                pbar.set_postfix({"Target detected": target_amount})
+        
+        self.logger.info(f"{target_amount} targets have been detected")
+        
+        if path is not None:
+            self.logger.info(f"Saving target as: {path}")
+            torch.save(self.gtboxes, path)
+            
+
     
     def load_adversarial_parameter(self, path:str):
         input_dict = torch.load(path)
@@ -296,24 +393,27 @@ class adv_dataset(DatasetTemplate):
     def get_adversarial_parameter(self):
         return self.universal_adv_patch_car.get_parameters()
 
-    def __getitem__(self, index):
+    def __getitem__(self, index,
+                    adversarial_parameters:list[torch.Tensor] = None):
         batch_dict = self.parent_dataset.__getitem__(index)
         batch_dict["idx"] = index
         load_data_to_gpu(batch_dict)
         
+        # pdb.set_trace()
         rooftop_approximate = None
         if self.rooftop_approximate is not None:
             rooftop_approximate = self.rooftop_approximate[index]
-        
-        batch_dict = self.prepare_car_gtbox(batch_dict,
-            rooftop_approximate)
-        batch_dict = self.prepare_pedestrain_gtbox(batch_dict)
-        batch_dict = self.prepare_bicycle_gtbox(batch_dict)
-                
         if self.enabled_adversarial_patch:
-            batch_dict=self.prepare_adversarial_data(batch_dict)
+            batch_dict = self.prepare_car_gtbox(batch_dict,
+                rooftop_approximate)
+            batch_dict = self.prepare_pedestrain_gtbox(batch_dict)
+            batch_dict = self.prepare_bicycle_gtbox(batch_dict)
+                    
             
-        # batch_dict = self.collect_all_class_gtbox(batch_dict)
+            batch_dict=self.prepare_adversarial_data(batch_dict,
+                                                     adversarial_parameters)
+            
+            # batch_dict = self.collect_all_class_gtbox(batch_dict)
         batch_dict = self.data_processor.forward(
             data_dict=batch_dict
         )
@@ -336,7 +436,9 @@ class adv_dataset(DatasetTemplate):
     def enable_adversarial_patch(self, enable):
         self.enabled_adversarial_patch = enable
         
-    def prepare_adversarial_data(self, batch_dict):
+    def prepare_adversarial_data(self, 
+                                 batch_dict,
+                                 adversarial_parameters = None,):
         gt_boxes_car = batch_dict.get("gt_boxes_car", None) #  [N, 8]
         gt_boxes_ped = batch_dict.get("gt_boxes_ped", None) #  [N, 8]
         gt_boxes_bicycle = batch_dict.get("gt_boxes_bicycle", None) #  [N, 8]
@@ -348,7 +450,8 @@ class adv_dataset(DatasetTemplate):
                                                             self.universal_adv_patch_car,
                                                             theta, 
                                                             batch_dict["rooftop_approximate"],
-                                                            self.sample_amount[0])
+                                                            self.sample_amount[0],
+                                                            adversarial_parameters)
 
             
         if gt_boxes_ped is not None and self.enable_ped:
@@ -447,11 +550,11 @@ class adv_dataset(DatasetTemplate):
         mSphere = mSphere.update_padded(new_vert)
         return mSphere
     
-
     def attach_adv_patch_scene_car_aux(self, points, adv_patch:adversarial_patch_3d, 
                                theta, 
                                rooftop_approximate: np.ndarray = None,
-                               sample_amount = 50):
+                               sample_amount = 50,
+                               adversarial_parameters = None,):
         pts_set = [points]
         meshes_batch = []
         if rooftop_approximate is not None:
@@ -460,7 +563,8 @@ class adv_dataset(DatasetTemplate):
                 extend_pts = None
                 if self.lidar is not None:
                     transformed_mesh = adv_patch.get_transformed_meshes(torch.from_numpy(rooftop_approximate[i]).float().cuda(),
-                                                                         theta[i])
+                                                                         theta[i],
+                                                                         adversarial_parameters)
                     meshes_batch.append(transformed_mesh)
                     
                 else:
@@ -632,6 +736,102 @@ class adv_dataset(DatasetTemplate):
         ret['batch_size'] = batch_size * batch_size_ratio
         return ret
     
+class dataset_adapter(DatasetTemplate):
+    def __init__(self, parent_dataset,
+                 dataset_cfg,
+                 class_names,
+                 training,
+                 root_path,
+                 logger):
+        super().__init__(
+                dataset_cfg=dataset_cfg, 
+                class_names=class_names, 
+                training=training, 
+                root_path=root_path, 
+                logger=logger
+            )
+        self.parent_dataset = parent_dataset
+        self.data_processor = Data_preprocessor(
+            self.dataset_cfg.ADVANCED_DATA_PROCESSOR, point_cloud_range=self.point_cloud_range,
+            training=self.training, num_point_features=4
+        )
+        
+    def __getitem__(self, 
+                    batch_dict,
+                    index, 
+                    adv_dataset:"bipartite_adv_dataset" = None,
+                    adversarial_parameters:list[torch.Tensor] = None):
+        batch_dict = self.parent_dataset.__getitem__(index)
+        batch_dict["idx"] = index
+        load_data_to_gpu(batch_dict)
+        
+        if adv_dataset is not None:
+            batch_dict = adv_dataset.process_adversarial_data(batch_dict, 
+                                                              index, 
+                                                              adversarial_parameters)
+            
+        batch_dict = self.data_processor.forward(
+            data_dict=batch_dict
+        )
+        load_data_to_gpu(batch_dict)
+        batch_dict = adv_dataset.gpu_collate_batch([batch_dict])
+        
+        return batch_dict
+
+class bipartite_adv_dataset(adv_dataset):
+    def __init__(self, surrogate_dataset:dataset_adapter,
+                 *args, **kwargs):
+        """
+        Args:
+            parent_dataset:
+        """
+        super().__init__(
+            *args, **kwargs
+        )
+        self.surrogate_dataset = surrogate_dataset
+        
+    def process_adversarial_data(self, batch_dict, index, adversarial_parameters):
+        rooftop_approximate = None
+        if self.rooftop_approximate is not None:
+            rooftop_approximate = self.rooftop_approximate[index]
+            
+        
+        batch_dict = self.prepare_car_gtbox(batch_dict,
+            rooftop_approximate)
+        batch_dict = self.prepare_pedestrain_gtbox(batch_dict)
+        batch_dict = self.prepare_bicycle_gtbox(batch_dict)
+        
+        
+        batch_dict=self.prepare_adversarial_data(batch_dict,
+                                                adversarial_parameters)
+        
+        return batch_dict
+        
+    def __getitem__(self, index,
+                    surrogate = False, 
+                    adversarial_parameters:list[torch.Tensor] = None):
+        
+        batch_dict = self.parent_dataset.__getitem__(index)
+        batch_dict["idx"] = index
+        load_data_to_gpu(batch_dict)
+        
+        batch_dict = self.process_adversarial_data(batch_dict, index, adversarial_parameters)
+        if surrogate:
+            batch_dict = self.surrogate_dataset.__getitem__(
+                index = index,
+                data_dict=batch_dict
+            )
+        else:
+             batch_dict = self.data_processor.forward(
+                data_dict=batch_dict
+            )
+            
+        load_data_to_gpu(batch_dict)
+         
+        batch_dict = self.gpu_collate_batch([batch_dict])
+        
+        
+        return batch_dict
     
 if __name__ == "__main__":
     CFG_FILE = "./cfgs/kitti_models/pointrcnn.yaml"
