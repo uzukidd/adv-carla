@@ -202,7 +202,7 @@ class relevant_bounding_box_loss(nn.Module):
         
         if masked_cls_preds.size(0) == 0:
             if ret_part_loss:
-                return masked_cls_preds.new_zeros(1), masked_cls_preds.new_zeros(1)
+                return masked_cls_preds.new_zeros(1), masked_cls_preds.new_zeros(1), masked_cls_preds.new_zeros(1)
             return masked_cls_preds.new_zeros(1, requires_grad=True)
         
         iou3d = self.iou3d(masked_box_preds, gt_boxes)
@@ -225,11 +225,11 @@ class relevant_bounding_box_loss(nn.Module):
         
         if masked_cls_preds_extended.size(0) == 0:
             if ret_part_loss:
-                return masked_cls_preds_extended.new_zeros(1), masked_cls_preds_extended.new_zeros(1)
+                return masked_cls_preds_extended.new_zeros(1), masked_cls_preds_extended.new_zeros(1), masked_cls_preds_extended.new_zeros(1)
             return masked_cls_preds_extended.new_zeros(1, requires_grad=True)
         
         if ret_part_loss:
-            return iou3d, masked_cls_preds
+            return iou3d, masked_cls_preds, masked_cls_preds_extended
         
         # total_loss = -1.0 * torch.log(1.0 - masked_cls_preds_extended) * iou3d
         total_loss = masked_cls_preds_extended * iou3d
@@ -327,11 +327,11 @@ class relevant_bounding_box_loss(nn.Module):
         
         if masked_cls_preds_extended.size(0) == 0:
             if ret_part_loss:
-                return masked_cls_preds_extended.new_zeros(1), masked_cls_preds_extended.new_zeros(1)
+                return masked_cls_preds_extended.new_zeros(1), masked_cls_preds_extended.new_zeros(1),  masked_cls_preds_extended.new_zeros(1)
             return masked_cls_preds_extended.new_zeros(1)
         
         if ret_part_loss:
-            return iou3d, masked_cls_preds
+            return iou3d, masked_cls_preds,  masked_cls_preds_extended
         
         total_loss = -1.0 * torch.log(1.0 - masked_cls_preds_extended) * iou3d
 

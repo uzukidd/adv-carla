@@ -1,4 +1,5 @@
-bash attack_level.sh pointrcnn 0 0
-bash attack_level.sh pointrcnn 0 1
-bash attack_level.sh pointrcnn 0 3
-bash attack_level.sh pointrcnn 0 4
+bash attack_level.sh voxel_rcnn_car 0 0 0.0005 &
+bash attack_level.sh voxel_rcnn_car 1 1 0.0005 &
+bash attack_level.sh voxel_rcnn_car 0 3 0.0005 &
+bash attack_level.sh voxel_rcnn_car 1 4 0.0005 &
+wait

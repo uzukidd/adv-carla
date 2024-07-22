@@ -13,12 +13,6 @@ DATA_CONFIG:
     DATA_PROCESSOR:
         -   NAME: mask_points_and_boxes_outside_range
             REMOVE_OUTSIDE_BOXES: True
-
-        -   NAME: shuffle_points
-            SHUFFLE_ENABLED: {
-                'train': True,
-                'test': False
-            }
     
     ADVANCED_DATA_PROCESSOR: 
         -   NAME: remove_reflective

@@ -100,11 +100,19 @@ class loss_wise_full_attack(nn.Module):
                  verbose = False)
     
     def forward(self, gt_boxes, first_dict = None, second_dict = None):
-        
         mesh_loss = None
-        
+        if self.args.mode < -2:
+            iou3d, masked_cls_preds, masked_cls_preds_extended = self.car_rbbox_loss_func(batch_dict = first_dict, 
+                                    gt_boxes = gt_boxes, 
+                                    target_class = 1,
+                                    logit_normal = "None",
+                                    detector_type = "rcnn",
+                                    ret_part_loss = True)
+            
+            if self.args.mode == -3:
+                mesh_loss = (iou3d * masked_cls_preds_extended).sum()
         if self.args.mode < 2:
-            iou3d, masked_cls_preds = self.car_rbbox_loss_func(batch_dict = first_dict, 
+            iou3d, masked_cls_preds, masked_cls_preds_extended = self.car_rbbox_loss_func(batch_dict = first_dict, 
                                     gt_boxes = gt_boxes, 
                                     target_class = 1,
                                     logit_normal = "sigmoid",
@@ -116,9 +124,11 @@ class loss_wise_full_attack(nn.Module):
                 mesh_loss = masked_cls_preds.sum()
             elif self.args.mode == -1:
                 mesh_loss = -1.0 * torch.log(1.0 - masked_cls_preds).sum()
+            elif self.args.mode == -2:
+                mesh_loss = (iou3d * masked_cls_preds_extended).sum()
 
         elif self.args.mode >= 2:
-            iou3d, masked_cls_preds = self.car_rbbox_loss_func(batch_dict = second_dict, 
+            iou3d, masked_cls_preds, masked_cls_preds_extended = self.car_rbbox_loss_func(batch_dict = second_dict, 
                                 gt_boxes = gt_boxes, 
                                 target_class = 1,
                                 logit_normal = "sigmoid",
@@ -128,7 +138,10 @@ class loss_wise_full_attack(nn.Module):
                 mesh_loss = iou3d.sum()
             elif self.args.mode == 3:
                 mesh_loss = masked_cls_preds.sum()
-            
+            elif self.args.mode == 4:
+                mesh_loss = torch.sigmoid(masked_cls_preds).sum()
+            elif self.args.mode == 5:
+                mesh_loss = (torch.sigmoid(masked_cls_preds_extended) * iou3d).sum()
         return mesh_loss
 
     
@@ -142,11 +155,15 @@ def run_one_epoch_attack(args,
                          logger,
                          verbose_epoch: int = 100):
     
-    adversarial_loss_func = stage_wise_full_attack(args)
-    # adversarial_loss_func = loss_wise_full_attack(args)
+    if args.mode == 100:
+        adversarial_loss_func = stage_wise_full_attack(args)
+    else:
+        adversarial_loss_func = loss_wise_full_attack(args)
     
-    optimizer = optim.Adam(dataset.get_adversarial_parameter(), 
-                       lr=args.learning_rate)
+    optimizer = None
+    if args.optim == "adam":
+        optimizer = optim.Adam(dataset.get_adversarial_parameter(), 
+                        lr=args.learning_rate)
 
     dataset.enable_adversarial_patch(enable_adv)
     
@@ -174,20 +191,19 @@ def run_one_epoch_attack(args,
         elif dataset.detector_type == "rcnn":
             attack_dict = target_component.forward_ret_dict
 
-        if args.OPTIM == "rbboxloss":
-            adversarial_loss = adversarial_loss_func(batch_dict['gt_boxes'],
-                                                    first_dict = attack_dict,
-                                                    second_dict = pred_dicts[0])
-            
-            regular_loss = dataset.universal_adv_patch_car.get_regularization_loss()
-            total_loss = adversarial_loss + args.laplacian_weights * regular_loss
-
+        
+        adversarial_loss = adversarial_loss_func(batch_dict['gt_boxes'],
+                                                first_dict = attack_dict,
+                                                second_dict = pred_dicts[0])
+        
+        regular_loss = dataset.universal_adv_patch_car.get_regularization_loss()
+        total_loss = adversarial_loss + args.laplacian_weights * regular_loss
+        
+        if optimizer:
             optimizer.zero_grad()
-            model.zero_grad()
-            total_loss.backward()
+        model.zero_grad()
+        total_loss.backward()
 
-        else:
-            raise NotImplementedError
         
         if verbose_epoch > 0 and i % verbose_epoch == 0:
             logger.info("-----------------loss--------------")
@@ -224,8 +240,32 @@ def run_one_epoch_attack(args,
             """
             dataset.universal_adv_patch_car.constrain_grad()
             
-            if args.OPTIM == "rbboxloss":
+            if args.optim == "adam":
                 optimizer.step()
+            elif args.optim == "ifgsm":
+                original_parameter = [
+                    para.clone().detach() for para in dataset.universal_adv_patch_car.get_parameters()
+                ]
+                
+                global_translation_grad, theta_grad, vert_grad = (para.grad for para in dataset.universal_adv_patch_car.get_parameters())
+                
+                if global_translation_grad is None:
+                    continue
+                global_translation_grad_norm = torch.linalg.norm(global_translation_grad)
+                global_translation_grad_norm[global_translation_grad_norm < 1e-5] = 1e-5
+                global_translation_grad_norm = global_translation_grad / global_translation_grad_norm
+                
+                vert_grad_norm = torch.linalg.norm(vert_grad, dim=1)
+                vert_grad_norm[vert_grad_norm < 1e-5] = 1e-5
+                vert_grad_norm = vert_grad / vert_grad_norm[:, None]
+                
+                theta_grad_norm = torch.sign(theta_grad)
+                
+                cur_parameter = [original_parameter[0] + args.learning_rate * global_translation_grad_norm,
+                        original_parameter[1] + args.learning_rate * theta_grad_norm,
+                        original_parameter[2] + args.learning_rate * vert_grad_norm,]
+                
+                dataset.universal_adv_patch_car.load_parameter(cur_parameter)
             else:
                 raise NotImplementedError
             
@@ -276,7 +316,7 @@ def parse_config():
     args.add_argument('--BATCH_SIZE', type=int, default=1, help='batch size')
     args.add_argument('--WORKERS', type=int, default=4, help='workers')
     args.add_argument('--DIST_TEST', action='store_true', help='distributed test')
-    args.add_argument('--OPTIM', type=str, default="rbboxloss", help='optimization method')
+    args.add_argument('--optim', type=str, default="ifgsm", choices=["adam", "ifgsm"], help='optimization method')
     args.add_argument('--headbox-attack', action='store_true', help='enable headbox attack')
     args.add_argument('--roihead-attack', action='store_true', help='enable roihead attack')
 
@@ -294,7 +334,7 @@ def parse_config():
     args.add_argument('--verbose-epoch', type=int, default=-1, help='verbose per epoch')
     args.add_argument('--visualize', action='store_true')
     
-    args.add_argument('--mode', type=int, default=0)
+    args.add_argument('--mode', type=int, default=100)
 
 
     args = args.parse_args()

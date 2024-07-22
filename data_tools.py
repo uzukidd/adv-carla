@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 from tqdm import tqdm
@@ -10,6 +11,7 @@ import glob
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
+from functools import partial
 
 from raytorch.LiDAR import LiDAR_base
 
@@ -27,6 +29,7 @@ from pcdet.config import cfg, cfg_from_yaml_file
 from pcdet.datasets import build_dataloader, DatasetTemplate, KittiDataset
 from pcdet.models import build_network, load_data_to_gpu
 from pcdet.utils import common_utils
+
 
 from preprocessing import Data_preprocessor
 from pcdet.datasets.processor.data_processor import DataProcessor
@@ -59,6 +62,17 @@ ply_dtypes = dict([
 
 # Numpy reader format
 valid_formats = {'ascii': '', 'binary_big_endian': '>', 'binary_little_endian': '<'}
+
+def register_data_processing(processing_name:str):
+    def _real_decorator(processing_func):
+        setattr(DataProcessor, 
+                processing_name, 
+                processing_func)
+        
+        return processing_func
+    return _real_decorator
+
+
 
 def parse_header(plyfile, ext):
     # Variables
@@ -137,6 +151,14 @@ def read_ply(filename):
 
     return data
 
+@register_data_processing("test_preprocesssing")
+def test_preprocesssing(self, data_dict=None, config=None):
+    if data_dict is None:
+        return partial(self.test_preprocesssing, config=config)
+    print(data_dict)
+    return data_dict
+
+
 class kitti_carla_dataset(DatasetTemplate):
     def __init__(self, dataset_cfg, 
                  class_names, 
@@ -165,6 +187,36 @@ class kitti_carla_dataset(DatasetTemplate):
         
         if self.logger is not None:
             self.logger.info('Total samples for KITTI-CARLA dataset: %d' % (len(self)))
+            
+    def prepare_predicted_gtboxes(self, 
+                                  surrogate_model:nn.Module,
+                                  path:str = None):
+        self.gtboxes = []
+        target_amount = 0
+        with tqdm(self, 
+                  desc="Inferencing...", 
+                  postfix={"Target detected": 0},) as pbar:
+            
+            for batch_dict in pbar:
+                surrogate_model.eval()
+                pred_dicts, _ = surrogate_model(batch_dict)
+                
+                preds_scores:torch.Tensor = pred_dicts[0]["pred_scores"] # [N, ]
+                preds_boxes:torch.Tensor = pred_dicts[0]["pred_boxes"] # [N, 7]
+                pred_labels:torch.Tensor = pred_dicts[0]["pred_labels"].view(-1) # [N, ]
+                
+                gtbox = torch.cat((preds_boxes, pred_labels), dim=1)
+                
+                self.gtboxes.append(gtbox)
+                
+                target_amount += gtbox.size(0)
+                pbar.set_postfix({"Target detected": target_amount})
+        
+        self.logger.info(f"{target_amount} targets have been detected")
+        
+        if path is not None:
+            self.logger.info(f"Saving target as: {path}")
+            torch.save(self.gtboxes, path)
             
     def evaluation(self, det_annos, class_names, **kwargs):
         assert self.gtboxes is not None
@@ -219,7 +271,11 @@ class kitti_carla_dataset(DatasetTemplate):
     def __getitem_aux__(self, index):
         if self.ext == '.ply':
             raw_data = read_ply(self.frames[index])
-            points = np.stack([raw_data["x"], raw_data["y"], raw_data["z"], raw_data["cos_angle_lidar_surface"]], axis=1)
+            points = np.stack([raw_data["x"], 
+                               raw_data["y"], 
+                               raw_data["z"], 
+                               raw_data["cos_angle_lidar_surface"], 
+                               raw_data['semantic']], axis=1)
         else:
             raise NotImplementedError
 
@@ -229,7 +285,7 @@ class kitti_carla_dataset(DatasetTemplate):
         }
 
         data_dict = self.prepare_data(data_dict=input_dict)
-        
+        # data_dict["points"], data_dict['semantic'] = torch.split()
         if self.gtboxes is not None:
             input_dict["gt_boxes"] = self.gtboxes[index]
         
@@ -834,15 +890,18 @@ class bipartite_adv_dataset(adv_dataset):
         return batch_dict
     
 if __name__ == "__main__":
-    CFG_FILE = "./cfgs/kitti_models/pointrcnn.yaml"
+    CFG_FILE = "configs/attack_configs/kitticarla/inference_pointrcnn.yaml"
     DATA_PATH = "/home/ksas/Public/datasets/KITTI-CARLA/dataset/Town01"
     cfg_from_yaml_file(CFG_FILE, cfg)
     logger = common_utils.create_logger()
     logger.info('-----------------Quick Demo of Kitti-carla-------------------------')
-    dataset = kitti_carla_dataset(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, training=False,
-        root_path=Path(DATA_PATH), ext=".ply", logger=logger)
+    dataset = kitti_carla_dataset(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, training=False, ext=".ply", logger=logger)
     
     sample = dataset[0]
+    points = sample["points"]
+    points = points[points[:, 4] == 10]
+    print(points)
+    
     # BATCH_SIZE = 1
     # WORKERS = 4
     # DIST_TEST = False
