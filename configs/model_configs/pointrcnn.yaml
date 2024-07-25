@@ -1,5 +1,6 @@
 
 NAME: PointRCNN
+CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
 
 BACKBONE_3D:
     NAME: PointNet2MSG

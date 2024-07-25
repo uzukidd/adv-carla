@@ -1,5 +1,4 @@
-CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
-
+ATTACK_METHOD : "evaluate"
 ATTACK_CONFIG: 
     ROOFTOP_ANNOTATE: "data/rooftop_approximation/kitti_carla_pointrcnn.pkl"
     ADVERSARIAL_PATCH: "output/train/pointrcnn_full_attack/final_adversarial_patch_checkpoint.pt"

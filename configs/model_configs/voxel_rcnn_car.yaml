@@ -1,4 +1,5 @@
 NAME: VoxelRCNN
+CLASS_NAMES: ['Car']
 
 VFE:
     NAME: MeanVFE

@@ -4,10 +4,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-import pdb
-import pickle as pkl
-import matplotlib.pyplot as plt
-from tqdm import tqdm
 from pathlib import Path
 torch.autograd.set_detect_anomaly(True)
 # try:
@@ -27,15 +23,18 @@ from pcdet.datasets import build_dataloader
 from pcdet.models import build_network
 from pcdet.utils import common_utils
 
-from attack_utils import *
-from data_tools import adv_dataset
+from data_tools import adv_dataset, kitti_carla_dataset
 from eval_utils import eval_utils
 from loss_utils import relevant_bounding_box_loss
+from white_box_attack import run_one_epoch_white_box_attack
+from query_attack import run_one_epoch_query_attack
 
 import pdb
 import argparse
 import os
 import time
+
+
 
 class query_attack(nn.Module):
     
@@ -150,90 +149,7 @@ class query_attack(nn.Module):
                 best_loss = cur_loss
                 self.surrogate_dataset.universal_adv_patch_car.load_parameter(cur_parameter)
                 self.victim_dataset.universal_adv_patch_car.load_parameter(cur_parameter)
-        
 
-        # loss = self.CWLoss(logits, target, kappa=-999., tar=True, num_classes=self.num_class)
-        # self.wb_classifier.zero_grad()
-        # loss.backward()
-
-        # grad = new_points.grad.data # g, [1, N, 3]
-        # grad[:,:,2] = 0.
-        # new_points.requires_grad = False
-        # rankings = torch.sqrt(grad[:,:,0] ** 2 + grad[:,:,1] ** 2) # \sqrt{g_{x'}^2+g_{y'}^2}, [1, N]
-        # directions = grad / (rankings.unsqueeze(-1)+1e-16) # (g_{x'}/r,g_{y'}/r,0), [1, N, 3]
-
-        # # rank the sensitivity map in the desending order
-        # point_list = []
-        # for i in range(points.size(1)):
-        #     point_list.append((i, directions[:,i,:], rankings[:,i].item()))
-        # sorted_point_list = sorted(point_list, key=lambda c: c[2], reverse=True)
-
-        # # query loop
-        # i = 0
-        # best_loss = -999.
-        # while best_loss < 0 and i < len(sorted_point_list):
-        #     # print(i, len(sorted_point_list))
-        #     idx, direction, _ = sorted_point_list[i]
-        #     for eps in {self.step_size, -self.step_size}:
-        #         pert = torch.zeros_like(new_points).cuda()
-        #         pert[:,idx,:] += eps * direction
-        #         inputs = new_points + pert
-        #         inputs = torch.matmul(spin_axis_matrix.transpose(-1, -2), inputs.unsqueeze(-1)) # U^T P', [1, N, 3, 1]
-        #         inputs = inputs - translation_matrix.unsqueeze(-1) # P = U^T P' - (P \cdot N) N, [1, N, 3, 1]
-        #         inputs = inputs.squeeze(-1).transpose(1, 2) # P, [1, 3, N]
-        #         # inputs = torch.clamp(inputs, -1, 1)
-        #         with torch.no_grad():
-        #             if not self.defense_method is None:
-        #                 logits = self.classifier(self.pre_head(inputs.detach()))
-        #             else:
-        #                 logits = self.classifier(inputs.detach()) # [1, num_class]
-        #             query_costs += 1
-                    
-        #         loss = self.CWLoss(logits, target, kappa=-999., tar=True, num_classes=self.num_class)
-        #         if loss.item() > best_loss:
-        #             # print(loss.item())
-        #             best_loss = loss.item()
-        #             new_points = new_points + pert
-        #             adv_target = logits.max(1)[1]
-        #             break
-        #     i += 1
-    
-
-
-def run_one_epoch_attack(args, 
-                         surrogate_dataset: adv_dataset, 
-                         victim_dataset: adv_dataset, 
-                         surrogate_model,
-                         victim_model, 
-                         enable_adv, 
-                         update, 
-                         visualize,
-                         logger,
-                         verbose_epoch: int = 100):
-    
-    query_attack_func = query_attack(args=args,
-                                     cfg=None,
-                                     surrogate_dataset = surrogate_dataset,
-                                     victim_dataset = victim_dataset,
-                                     surrogate_model=surrogate_model,
-                                     victim_model=victim_model,
-                                     target_component_name=surrogate_dataset.target_component)
-    # adversarial_loss_func = loss_wise_full_attack(args)
-
-    surrogate_dataset.enable_adversarial_patch(enable_adv)
-    victim_dataset.enable_adversarial_patch(enable_adv)
-    
-    surrogate_model.eval()
-    victim_model.eval()
-
-    for idx, module in enumerate(surrogate_model.module_list):
-        if module._get_name() in surrogate_dataset.trainging_components:
-            module.train()
-            
-    
-    for index in tqdm(range(surrogate_dataset.__len__()), total=surrogate_dataset.__len__()):
-        query_attack_func.forward(index)
-            
 
 def vis_adv_examples(kitti_adv_dataset):
     fig = plot_scene({
@@ -276,15 +192,17 @@ def parse_config():
     args.add_argument('--device', type=int, default=0, help='device')
     args.add_argument('--EVAL_OUTPUT_DIR', type=str, default="./eval_output/", help='evaluation output directory')
     
-    args.add_argument('--cfg-file', type=str, default="configs/attack_configs/kitti_black_box/query_attack_pointrcnn.yaml", help='configuration file')
+    args.add_argument('--cfg-file', type=str, default="configs/attack_configs/relevant_bounding_box_pointpillar.yaml", help='configuration file')
     
     args.add_argument('--BATCH_SIZE', type=int, default=1, help='batch size')
     args.add_argument('--WORKERS', type=int, default=4, help='workers')
     args.add_argument('--DIST_TEST', action='store_true', help='distributed test')
-    args.add_argument('--OPTIM', type=str, default="rbboxloss", help='optimization method')
+    args.add_argument('--optim', type=str, default="ifgsm", choices=["adam", "ifgsm"], help='optimization method')
+    args.add_argument('--headbox-attack', action='store_true', help='enable headbox attack')
+    args.add_argument('--roihead-attack', action='store_true', help='enable roihead attack')
 
-    args.add_argument('--surrogate-stage-1', action='store_true', help='use stage 1 loss as the surrogate')
-
+    args.add_argument('--eval-clean-data', action='store_true', help='evaluate clean data (only)')
+    args.add_argument('--eval-init-patch', action='store_true', help='evaluate initial patch (only)')
     args.add_argument('--roi-head-weights', type=float, default=1.0, help='roi head weights')
     args.add_argument('--laplacian-weights', type=float, default=0.001, help='laplacian weights')
     args.add_argument('--learning-rate', type=float, default=0.005, help='learning rate')
@@ -296,8 +214,9 @@ def parse_config():
     args.add_argument('--verbose-epoch', type=int, default=-1, help='verbose per epoch')
     args.add_argument('--visualize', action='store_true')
     
-    args.add_argument('--mode', type=int, default=0)
-
+    args.add_argument('--stage-1-loss-reduce-func', type=str, default="physical_loss")
+    args.add_argument('--stage-2-loss-reduce-func', type=str, default="score_multiply_iou3d")
+    args.add_argument("--surrogate-stage-1", type=bool, default=False)
 
     args = args.parse_args()
 
@@ -306,6 +225,18 @@ def parse_config():
 
     return args, cfg
 
+
+
+def set_seed_and_device(args):
+    ### Set the seed for numpy, torch, and device for cuda
+    np.random.seed(args.UNI_RANDOM_SEED) 
+    torch.manual_seed(args.UNI_RANDOM_SEED)
+
+    torch.cuda.manual_seed(args.UNI_RANDOM_SEED)
+    torch.cuda.manual_seed_all(args.UNI_RANDOM_SEED)
+
+    torch.cuda.set_device(args.device)
+    
 def build_model_from_cfg(model_cfg,
                          dataset,
                          logger,):
@@ -321,29 +252,63 @@ def build_model_from_cfg(model_cfg,
     
     return model
 
-def set_seed_and_device(args):
-    ### Set the seed for numpy, torch, and device for cuda
-    np.random.seed(args.UNI_RANDOM_SEED) 
-    torch.manual_seed(args.UNI_RANDOM_SEED)
+def load_dataset(args, dataset_cfg, class_names, logger):
+    if dataset_cfg.DATASET == "KittiDataset":
+        dataset, test_loader, sampler = build_dataloader(
+                dataset_cfg=dataset_cfg,
+                class_names=class_names,
+                batch_size=args.BATCH_SIZE,
+                dist=args.DIST_TEST,
+                workers=args.WORKERS,
+                logger=logger,
+                training=False
+            )
+        
+    elif dataset_cfg.DATASET == "KittiCarlaDataset":
+        dataset = kitti_carla_dataset(dataset_cfg, 
+                                      class_names=class_names, 
+                                      training=False, 
+                                      ext=".ply", 
+                                    #   gtboxes_path = dataset_cfg.GTBOXES,
+                                      logger=logger)
+        
+    return dataset
 
-    torch.cuda.manual_seed(args.UNI_RANDOM_SEED)
-    torch.cuda.manual_seed_all(args.UNI_RANDOM_SEED)
+def build_model_pipeline(args, logger, lidar, dataset_cfg,
+                          model_cfg,
+                          attack_cfg):
+    
+    dataset = load_dataset(args, dataset_cfg, model_cfg.CLASS_NAMES, logger)
+    logger.info(f'Class names of samples: \t{dataset.class_names}')
 
-    torch.cuda.set_device(args.device)
-
+    model = build_model_from_cfg(model_cfg,
+                         dataset,
+                         logger,)
+    components_of_model(model, logger)
+    
+    adv_pipeline = adv_dataset(dataset,
+                            attack_cfg,
+                            surrogate_model=model,
+                            lidar = lidar,
+                            enable_car = True,
+                            enable_ped = False,
+                            enable_bicycle = False,
+                            car_adv_patch_scale = args.scale,
+                            car_adv_patch_level = args.level,
+                            )
+    
+    logger.info(f"parameter length:\t{[para.size() for para in adv_pipeline.get_adversarial_parameter()]}")
+    
+    return dataset, model, adv_pipeline
 
 def main():
     ### Setting the parameters and logger
     args, cfg = parse_config()
     
-    surrogate_dataset_cfg = cfg.SURROGATE_DATA_CONFIG
-    victim_dataset_cfg = cfg.DATA_CONFIG
-
-    surrogate_model_cfg = cfg.SURROGATE_MODEL
-    victim_model_cfg = cfg.MODEL
-
-    surrogate_attack_cfg = cfg.SURROGATE_ATTACK_CONFIG
-    victim_attack_cfg = cfg.ATTACK_CONFIG
+    attack_method = cfg.ATTACK_METHOD
+    dataset_cfg = cfg.DATA_CONFIG
+    model_cfg = cfg.MODEL
+    attack_cfg = cfg.ATTACK_CONFIG
 
     ### Set the seed for numpy, torch, and device number for cuda
     set_seed_and_device(args)
@@ -353,85 +318,90 @@ def main():
     logger = common_utils.create_logger(log_file = os.path.join(args.SAVE_PATH, "exp_log.log"))
     logger.info('-----------------Kitti Attack Test-------------------------')
     logger.info(args)
-    ### Load the parameters of annotated rooftop 
-
-    ### Build the dataloader
-    surrogate_dataset, _, _ = build_dataloader(
-            dataset_cfg=surrogate_dataset_cfg,
-            class_names=surrogate_model_cfg.CLASS_NAMES,
-            batch_size=args.BATCH_SIZE,
-            dist=args.DIST_TEST,
-            workers=args.WORKERS,
-            logger=logger,
-            training=False
-        )
-    
-    victim_dataset, _, _ = build_dataloader(
-            dataset_cfg=victim_dataset_cfg,
-            class_names=victim_model_cfg.CLASS_NAMES,
-            batch_size=args.BATCH_SIZE,
-            dist=args.DIST_TEST,
-            workers=args.WORKERS,
-            logger=logger,
-            training=False
-        )
-    
-    logger.info(f'Class names of samples: \t{victim_dataset.class_names}')
-    
-    ### Build the neural network and load the checkpoint
-    surrogate_model = build_model_from_cfg(surrogate_model_cfg,
-                         surrogate_dataset,
-                         logger,)
-    components_of_model(surrogate_model, logger)
-    
-    victim_model = build_model_from_cfg(victim_model_cfg,
-                         victim_dataset,
-                         logger,)
-    components_of_model(victim_model, logger)
 
     ### Prepare the adversarial dataset, which contains get_gradients methods and so forth, and optimizer oriented patch 
     lidar = LiDAR_base(origin=torch.tensor([0.0, 0.0, 0.0]).cuda(),
                    azi_range=[-90, 90],
                    polar_range= [-2.18, 2.0],
                    polar_num=10, azi_res=0.08)
-    surrogate_adv_dataset = adv_dataset(surrogate_dataset,
-                                    surrogate_attack_cfg,
-                                    surrogate_model=None,
-                                    lidar = lidar,
-                                    enable_car = True,
-                                    enable_ped = False,
-                                    enable_bicycle = False,
-                                    car_adv_patch_scale = args.scale,
-                                    car_adv_patch_level = args.level,
-                                    )
     
-    victim_adv_dataset = adv_dataset(victim_dataset,
-                                    victim_attack_cfg,
-                                    surrogate_model=None,
-                                    lidar = lidar,
-                                    enable_car = True,
-                                    enable_ped = False,
-                                    enable_bicycle = False,
-                                    car_adv_patch_scale = args.scale,
-                                    car_adv_patch_level = args.level,
-                                    )
-        
+    dataset, model, adv_pipeline = build_model_pipeline(args, logger, lidar, dataset_cfg,
+                          model_cfg,
+                          attack_cfg)
+    
+    if attack_method == "query":
+        surrogate_dataset_cfg = cfg.SURROGATE_DATA_CONFIG
+        surrogate_model_cfg = cfg.SURROGATE_MODEL
+        surrogate_attack_cfg = cfg.SURROGATE_ATTACK_CONFIG
+
+        surrogate_dataset, surrogate_model, surrogate_adv_pipeline = build_model_pipeline(args, logger, lidar, surrogate_dataset_cfg,
+                          surrogate_model_cfg,
+                          surrogate_attack_cfg)
+    elif attack_method == "evaluate" or attack_method == "inference":
+        if attack_cfg.ADVERSARIAL_PATCH is not None:
+            adv_pipeline.load_adversarial_parameter(attack_cfg.ADVERSARIAL_PATCH)
+
+    
+    if args.eval_clean_data:
+        logger.info("Evaluate the clean data")
+        eval_data(args = args, 
+                cfg = cfg,
+                adv_enabled = False, 
+                model = model, 
+                dataset = adv_pipeline, 
+                logger = logger)
+        return
+    
+    if args.eval_init_patch:
+        logger.info("Evaluate the initial patch")
+        eval_data(args = args, 
+                cfg = cfg,
+                adv_enabled = True, 
+                model = model, 
+                dataset = adv_pipeline, 
+                logger = logger)
+        return
+    
     ### Evaluate patch attack with one epoch
-    victim_adv_dataset.save_adversarial_parameter(os.path.join(args.SAVE_PATH, "initial_patch_checkpoint.pt"))
+    adv_pipeline.save_adversarial_parameter(os.path.join(args.SAVE_PATH, "initial_patch_checkpoint.pt"))
     logger.info(f'Checkpoint has been saved as: \t{os.path.join(args.SAVE_PATH, "initial_patch_checkpoint.pt")}')
 
-    run_one_epoch_attack(args,
-                surrogate_dataset = surrogate_adv_dataset,
-                victim_dataset = victim_adv_dataset,
+    if attack_method == "optimize":
+        run_one_epoch_white_box_attack(args,
+                    dataset = adv_pipeline,
+                    model = model,
+                    enable_adv = True, 
+                    update = True, 
+                    visualize = True, 
+                    logger = logger,
+                    verbose_epoch = args.verbose_epoch)
+    elif attack_method == "query":
+        run_one_epoch_query_attack(args,
+                surrogate_dataset = surrogate_adv_pipeline,
+                victim_dataset = adv_pipeline,
                 surrogate_model = surrogate_model,
-                victim_model = victim_model,
+                victim_model = model,
                 enable_adv = True, 
                 update = True, 
                 visualize = True, 
                 logger = logger,
                 verbose_epoch = args.verbose_epoch)
+    elif attack_method == "evaluate":
+        logger.info("Evaluate final patch")
+        eval_data(args = args, 
+                cfg = cfg,
+                adv_enabled = True, 
+                model = model, 
+                dataset = adv_pipeline, 
+                logger = logger)
+        return
+    elif attack_method == "inference":
+        adv_pipeline.prepare_predicted_gtboxes(path = os.path.join(args.SAVE_PATH, "gtboxes.pt"))
+        return
+    else:
+        raise NotImplementedError
 
-    victim_adv_dataset.save_adversarial_parameter(os.path.join(args.SAVE_PATH, "final_adversarial_patch_checkpoint.pt"))
+    adv_pipeline.save_adversarial_parameter(os.path.join(args.SAVE_PATH, "final_adversarial_patch_checkpoint.pt"))
     logger.info(f'Checkpoint has been saved as: \t{os.path.join(args.SAVE_PATH, "final_adversarial_patch_checkpoint.pt")}')
     ### Visualize the adversarial examples
     # vis_adv_examples(kitti_adv_dataset)
@@ -441,8 +411,8 @@ def main():
     eval_data(args = args, 
             cfg = cfg,
             adv_enabled = True, 
-            model = victim_model, 
-            dataset = victim_adv_dataset, 
+            model = model, 
+            dataset = adv_pipeline, 
             logger = logger)
 
 if __name__ == "__main__":

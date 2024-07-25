@@ -1,7 +1,7 @@
-CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
-
+ATTACK_METHOD : "inference"
 ATTACK_CONFIG: 
-    ROOFTOP_ANNOTATE: "/home/ksas/uzuki_space/vehicle-shape-reconstruction/rooftop_appro_std.pkl"
+    ROOFTOP_ANNOTATE: null
+    ADVERSARIAL_PATCH: null
     DETECTOR: "rcnn"
     TARGET_COMPONENT: AnchorHeadSingle
     TRAINING_COMPONENTS: []

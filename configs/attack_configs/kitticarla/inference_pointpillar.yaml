@@ -1,5 +1,4 @@
-CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
-
+ATTACK_METHOD : "inference"
 ATTACK_CONFIG: 
     ROOFTOP_ANNOTATE: null
     ADVERSARIAL_PATCH: null

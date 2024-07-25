@@ -64,10 +64,8 @@ SURROGATE_DATA_CONFIG:
 
 
 MODEL:
-    CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
     _BASE_CONFIG_: configs/model_configs/second.yaml
     CKPT_PATH: "/home/ksas/Public/model_zoo/pcdet/second_7862.pth"
 SURROGATE_MODEL:
-    CLASS_NAMES: ['Car']
     _BASE_CONFIG_: configs/model_configs/voxel_rcnn_car.yaml
     CKPT_PATH: "/home/ksas/Public/model_zoo/pcdet/voxel_rcnn_car_84.54.pth"

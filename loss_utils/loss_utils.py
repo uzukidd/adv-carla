@@ -4,11 +4,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Callable, Optional
 
 import pdb
 
 from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d
 from cudaext.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
+
+
 
 class mesh_objectwise_loss(nn.Module):
     """
@@ -153,8 +156,8 @@ class relevant_bounding_box_loss(nn.Module):
                 gt_boxes: torch.Tensor, 
                 target_class: int, 
                 logit_normal:str = 'sigmoid',
-                return_gtbox_id: bool = False,
-                ret_part_loss: bool = False):
+                loss_reduce_func: Optional[Callable[[torch.Tensor, 
+                                            torch.Tensor, torch.Tensor], torch.Tensor]] = None,):
         
         """
 
@@ -178,10 +181,8 @@ class relevant_bounding_box_loss(nn.Module):
         gt_boxes = gt_boxes[gt_labels[:, 0] == target_class]
         gt_labels = gt_labels[gt_labels[:, 0] == target_class]
         
-        target_class_logit = target_class - 1
-
         if gt_boxes.size(0) == 0:
-            return torch.zeros([0], requires_grad=True)
+            return None, True
         # assert gt_boxes.size(0), "at leaset one gt box exists."
         
         # assign 
@@ -201,10 +202,11 @@ class relevant_bounding_box_loss(nn.Module):
         masked_box_preds = masked_box_preds[confidence_mask]
         
         if masked_cls_preds.size(0) == 0:
-            if ret_part_loss:
-                return masked_cls_preds.new_zeros(1), masked_cls_preds.new_zeros(1), masked_cls_preds.new_zeros(1)
-            return masked_cls_preds.new_zeros(1, requires_grad=True)
+            return None, True
         
+        """
+        Calculate iou.
+        """
         iou3d = self.iou3d(masked_box_preds, gt_boxes)
         
         if self.frozen_iou:
@@ -219,30 +221,33 @@ class relevant_bounding_box_loss(nn.Module):
         
         iou3d = iou3d.view(-1)
         
+        """
+        IoU threshold filter.
+        """
         iou_mask = (iou3d > self.iou_threshold)
         iou3d = iou3d[iou_mask]
         masked_cls_preds_extended = masked_cls_preds_extended[iou_mask]
         
         if masked_cls_preds_extended.size(0) == 0:
-            if ret_part_loss:
-                return masked_cls_preds_extended.new_zeros(1), masked_cls_preds_extended.new_zeros(1), masked_cls_preds_extended.new_zeros(1)
-            return masked_cls_preds_extended.new_zeros(1, requires_grad=True)
+            return None, True
+
+        if loss_reduce_func is None:
+            # total_loss = -1.0 * torch.log(1.0 - masked_cls_preds_extended) * iou3d
+            total_loss = masked_cls_preds_extended * iou3d
+            total_loss = total_loss.sum()
+        else:
+            total_loss = loss_reduce_func(iou3d, 
+                                          masked_cls_preds, 
+                                          masked_cls_preds_extended)
         
-        if ret_part_loss:
-            return iou3d, masked_cls_preds, masked_cls_preds_extended
-        
-        # total_loss = -1.0 * torch.log(1.0 - masked_cls_preds_extended) * iou3d
-        total_loss = masked_cls_preds_extended * iou3d
-        total_loss = total_loss.sum()
-        
-        return total_loss
+        return total_loss, False
     
     def forward_headbox(self, batch_dict, 
                 gt_boxes: torch.Tensor, 
                 target_class: int, 
                 logit_normal:str = 'sigmoid',
-                return_gtbox_id: bool = False,
-                ret_part_loss: bool = False):
+                loss_reduce_func: Optional[Callable[[torch.Tensor, 
+                                            torch.Tensor, torch.Tensor], torch.Tensor]] = None,):
         
         """
 
@@ -254,9 +259,8 @@ class relevant_bounding_box_loss(nn.Module):
         - ret_part_loss: bool
 
         Returns:
-        - iou_3d: 
-        - assign_idx: 
-        - mesh_loss:
+        - loss:
+        - empty_flag: 
         """
         batch_cls_preds:torch.Tensor = batch_dict["batch_cls_preds"] # [N, 3]
         batch_box_preds:torch.Tensor = batch_dict["batch_box_preds"] # [N, 7]
@@ -273,44 +277,37 @@ class relevant_bounding_box_loss(nn.Module):
 
         # assert gt_boxes.size(0), "at leaset one gt box exists."
         if gt_boxes.size(0) == 0:
-            if ret_part_loss:
-                return masked_cls_preds_extended.new_zeros(1), masked_cls_preds_extended.new_zeros(1)
-            return masked_cls_preds_extended.new_zeros(1)
+            return None, True
         
-        # assign 
-        # batch_cls_preds_normalized = F.softmax(batch_cls_preds, dim=1) # [N, 3]
+        # normalization 
         if logit_normal == "sigmoid":
+            """
+            Normalized scores are only used to filter out results below the threshold.
+            """
             batch_cls_preds_normalized = torch.sigmoid(batch_cls_preds) # [N, 3]
             confidence_mask = (batch_cls_preds_normalized[:, target_class_logit] > self.confidence_threshold)
         elif logit_normal == "softmax":
+            """
+            Normalized scores are only used to filter out results below the threshold.
+            """
             batch_cls_preds_normalized = F.softmax(batch_cls_preds, dim=1) # [N, 3]
             confidence_mask = (batch_cls_preds_normalized[:, target_class_logit] > self.confidence_threshold)
-        elif logit_normal == "None":
-            batch_cls_preds_normalized = torch.sigmoid(batch_cls_preds)
-            confidence_mask = (batch_cls_preds_normalized[:, target_class_logit] > self.confidence_threshold)
-            batch_cls_preds_normalized = batch_cls_preds
         else:
             raise NotImplementedError
                 
-        masked_cls_preds = batch_cls_preds_normalized[confidence_mask]
+        masked_cls_preds = batch_cls_preds[confidence_mask]
         masked_box_preds = batch_box_preds[confidence_mask]
         
         if masked_cls_preds.size(0) == 0:
-            return masked_cls_preds.new_zeros(1, requires_grad=True)
+            return None, True
         
         iou3d = self.iou3d(masked_box_preds, gt_boxes)
-        if return_gtbox_id:
-            gtbox_idx = torch.arange(iou3d.size(1)).cuda().repeat(iou3d.size(0), 1).contiguous().view(-1)
-        
+
         masked_cls_preds = masked_cls_preds[:, target_class_logit]
         masked_cls_preds_extended = masked_cls_preds.unsqueeze(dim=1)
         masked_cls_preds_extended = masked_cls_preds_extended.expand(-1, iou3d.size(1))
         masked_cls_preds_extended = masked_cls_preds_extended.contiguous().view(-1)
-        
-        # masked_box_preds_extended = masked_box_preds.unsqueeze(dim=1)
-        # masked_box_preds_extended = masked_box_preds_extended.expand(-1, iou3d.size(1), -1)
-        # masked_box_preds_extended = masked_box_preds_extended.contiguous().view(-1, masked_box_preds.size(1))
-        
+                
         iou3d = iou3d.view(-1)
         if self.frozen_iou:
             iou3d = iou3d.detach()
@@ -320,34 +317,33 @@ class relevant_bounding_box_loss(nn.Module):
         
         iou_mask = (iou3d > self.iou_threshold)
         iou3d = iou3d[iou_mask]
-        if return_gtbox_id:
-            gtbox_idx = gtbox_idx[iou_mask]
+
         masked_cls_preds_extended = masked_cls_preds_extended[iou_mask]
-        # masked_box_preds_extended = masked_box_preds_extended[iou_mask]
         
         if masked_cls_preds_extended.size(0) == 0:
-            if ret_part_loss:
-                return masked_cls_preds_extended.new_zeros(1), masked_cls_preds_extended.new_zeros(1),  masked_cls_preds_extended.new_zeros(1)
-            return masked_cls_preds_extended.new_zeros(1)
+            return None, True
         
-        if ret_part_loss:
-            return iou3d, masked_cls_preds,  masked_cls_preds_extended
+        if loss_reduce_func is None:
+            # total_loss = -1.0 * torch.log(1.0 - masked_cls_preds_extended) * iou3d
+            total_loss = masked_cls_preds_extended * iou3d
+            total_loss = total_loss.sum()
+        else:
+            total_loss = loss_reduce_func(iou3d, 
+                                          masked_cls_preds, 
+                                          masked_cls_preds_extended)
+            
+        if torch.isnan(total_loss).item():
+            return None, True
         
-        total_loss = -1.0 * torch.log(1.0 - masked_cls_preds_extended) * iou3d
-
-        if return_gtbox_id:
-            return total_loss, gtbox_idx, gt_boxes.size(0)
-        
-        total_loss = total_loss.sum()
-        
-        return total_loss
+        return total_loss, False
         
     def forward(self, batch_dict, 
                 gt_boxes: torch.Tensor, 
                 target_class: int, 
                 logit_normal:str = 'sigmoid',
                 detector_type:str = 'single',
-                return_gtbox_id: bool = False,
+                loss_reduce_func: Optional[Callable[[torch.Tensor, 
+                                            torch.Tensor, torch.Tensor], torch.Tensor]] = None,
                 ret_part_loss: bool = False):
         
         if detector_type == 'single':
@@ -355,15 +351,13 @@ class relevant_bounding_box_loss(nn.Module):
                 gt_boxes, 
                 target_class, 
                 logit_normal,
-                return_gtbox_id,
-                ret_part_loss)
+                loss_reduce_func)
         elif detector_type == 'rcnn':
             return self.forward_headbox(batch_dict, 
                 gt_boxes, 
                 target_class, 
                 logit_normal,
-                return_gtbox_id,
-                ret_part_loss)
+                loss_reduce_func)
             
         raise NotImplementedError
     

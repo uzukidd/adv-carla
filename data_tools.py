@@ -33,10 +33,9 @@ from pcdet.utils import common_utils
 
 from preprocessing import Data_preprocessor
 from pcdet.datasets.processor.data_processor import DataProcessor
-from pcdet.datasets.processor.point_feature_encoder import PointFeatureEncoder
 
 from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d, cal_iou
-
+from cudaext.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
 from attack_utils import *
 
 ply_dtypes = dict([
@@ -198,6 +197,7 @@ class kitti_carla_dataset(DatasetTemplate):
                   postfix={"Target detected": 0},) as pbar:
             
             for batch_dict in pbar:
+                pdb.set_trace()
                 surrogate_model.eval()
                 pred_dicts, _ = surrogate_model(batch_dict)
                 
@@ -275,20 +275,21 @@ class kitti_carla_dataset(DatasetTemplate):
                                raw_data["y"], 
                                raw_data["z"], 
                                raw_data["cos_angle_lidar_surface"], 
-                               raw_data['semantic']], axis=1)
+                               raw_data['semantic'],
+                               ], axis=1)
         else:
             raise NotImplementedError
 
         input_dict = {
-            'points': points,
+            'points': points[:, :4],
             'frame_id': index,
+            'points_with_semantic':  points,
         }
 
         data_dict = self.prepare_data(data_dict=input_dict)
-        # data_dict["points"], data_dict['semantic'] = torch.split()
         if self.gtboxes is not None:
             input_dict["gt_boxes"] = self.gtboxes[index]
-        
+
         return data_dict
     
 
@@ -413,11 +414,29 @@ class adv_dataset(DatasetTemplate):
                 preds_scores:torch.Tensor = pred_dicts[0]["pred_scores"] # [N, ]
                 preds_boxes:torch.Tensor = pred_dicts[0]["pred_boxes"] # [N, 7]
                 pred_labels:torch.Tensor = pred_dicts[0]["pred_labels"].view(-1) # [N, ]
+            
+                label_mask = (pred_labels == 1)
+                pred_labels = pred_labels[label_mask].detach().view(-1, 1)
+                preds_boxes = preds_boxes[label_mask].detach()
                 
-                score_mask = preds_scores >= 0.5
-                pred_labels = pred_labels[score_mask].detach().view(-1, 1)
-                preds_boxes = preds_boxes[score_mask].detach()
-                
+                if batch_dict.get('points_with_semantic') is not None:
+                    points_with_semantic = batch_dict['points_with_semantic'][0]
+                    points_assign = points_in_boxes_gpu(points_with_semantic[:, :3].unsqueeze(0), preds_boxes.unsqueeze(0))
+                    points_assign = points_assign.squeeze(0)
+                    
+                    pred_boxes_mask = preds_boxes.new_zeros(preds_boxes.size(0)).bool()
+                    for i in range(preds_boxes.size(0)):
+                        points_idx_mask = (points_assign == i)
+                        points_pred_box = points_with_semantic[points_idx_mask]
+                        if points_pred_box.numel() == 0:
+                            continue
+                        
+                        total_points_pred_box = points_pred_box.size(0)
+                        confidence_pred_boxes = (points_pred_box == 10).sum()/total_points_pred_box
+                        pred_boxes_mask[i] = (confidence_pred_boxes.item() > 0.7)
+                    
+                pred_labels = pred_labels[pred_boxes_mask].detach()
+                preds_boxes = preds_boxes[pred_boxes_mask].detach()
                 gtbox = torch.cat((preds_boxes, pred_labels), dim=1)
                 
                 self.gtboxes.append(gtbox)
