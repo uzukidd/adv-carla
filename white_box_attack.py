@@ -89,7 +89,7 @@ def run_one_epoch_white_box_attack(args,
     
     for i, batch_dict in tqdm(enumerate(dataset), total=dataset.__len__()):
         # import random
-        # batch_dict = dataset.__getitem__(240)
+        # batch_dict = dataset.__getitem__(923)
         if not torch.eq(batch_dict['gt_boxes'][0, :, 7], 1).any():
             continue
         
