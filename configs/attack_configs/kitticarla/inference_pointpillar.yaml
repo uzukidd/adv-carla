@@ -1,5 +1,4 @@
-CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
-
+ATTACK_METHOD : "inference"
 ATTACK_CONFIG: 
     ROOFTOP_ANNOTATE: null
     ADVERSARIAL_PATCH: null
@@ -15,12 +14,6 @@ DATA_CONFIG:
     DATA_PROCESSOR:
         - NAME: mask_points_and_boxes_outside_range
           REMOVE_OUTSIDE_BOXES: True
-
-        - NAME: shuffle_points
-          SHUFFLE_ENABLED: {
-            'train': True,
-            'test': False
-          }
 
         - NAME: transform_points_to_voxels_placeholder
           VOXEL_SIZE: [0.16, 0.16, 4]

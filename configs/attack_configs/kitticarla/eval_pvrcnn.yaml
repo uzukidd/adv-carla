@@ -1,5 +1,4 @@
-CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
-
+ATTACK_METHOD : "evaluate"
 ATTACK_CONFIG: 
     ROOFTOP_ANNOTATE: "data/rooftop_approximation/kitti_carla_pvrcnn.pkl"
     ADVERSARIAL_PATCH: "output/train/all_exp/pvrcnn_full_attack/final_adversarial_patch_checkpoint.pt"
@@ -14,12 +13,6 @@ DATA_CONFIG:
     DATA_PROCESSOR:
         - NAME: mask_points_and_boxes_outside_range
           REMOVE_OUTSIDE_BOXES: True
-
-        - NAME: shuffle_points
-          SHUFFLE_ENABLED: {
-            'train': True,
-            'test': False
-          }
 
         - NAME: transform_points_to_voxels_placeholder
           VOXEL_SIZE: [0.05, 0.05, 0.1]

@@ -1,8 +1,7 @@
-CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
-
+ATTACK_METHOD : "evaluate"
 ATTACK_CONFIG: 
     ROOFTOP_ANNOTATE: "data/rooftop_approximation/kitti_carla_pointrcnn.pkl"
-    ADVERSARIAL_PATCH: "output/train/pointrcnn_full_attack/final_adversarial_patch_checkpoint.pt"
+    ADVERSARIAL_PATCH: "data/gtound truth/inference_models/pointrcnn/gtboxes.pt"
     DETECTOR: "rcnn"
     TARGET_COMPONENT: "PointHeadBox"
     TRAINING_COMPONENTS: []
@@ -13,12 +12,6 @@ DATA_CONFIG:
     DATA_PROCESSOR:
         -   NAME: mask_points_and_boxes_outside_range
             REMOVE_OUTSIDE_BOXES: True
-
-        -   NAME: shuffle_points
-            SHUFFLE_ENABLED: {
-                'train': True,
-                'test': False
-            }
     
     ADVANCED_DATA_PROCESSOR: 
         -   NAME: remove_reflective

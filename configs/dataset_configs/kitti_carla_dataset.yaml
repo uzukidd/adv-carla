@@ -8,11 +8,6 @@ DATA_SPLIT: {
     'test': train
 }
 
-INFO_PATH: {
-    'train': [/home/ksas/Public/datasets/KITTI/kitti_infos_trainval.pkl],
-    'test': [/home/ksas/Public/datasets/KITTI/kitti_infos_trainval.pkl],
-}
-
 GET_ITEM_LIST: ["points"]
 FOV_POINTS_ONLY: True
 
@@ -55,8 +50,5 @@ DATA_PROCESSOR:
     - NAME: mask_points_and_boxes_outside_range
       REMOVE_OUTSIDE_BOXES: True
 
-    - NAME: shuffle_points
-      SHUFFLE_ENABLED: {
-        'train': True,
-        'test': False
-      }
+    - NAME: test_preprocesssing
+

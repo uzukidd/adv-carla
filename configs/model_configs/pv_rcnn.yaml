@@ -1,6 +1,5 @@
-
-
 NAME: PVRCNN
+CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
 
 VFE:
     NAME: MeanVFE
