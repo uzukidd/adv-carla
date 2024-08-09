@@ -1,13 +1,13 @@
 ATTACK_METHOD : "evaluate"
 ATTACK_CONFIG: 
-    ROOFTOP_ANNOTATE: "data/rooftop_approximation/kitti_carla_pointpillar.pkl"
+    ROOFTOP_ANNOTATE: "data/gtound truth/inference_models/pointpillar/gtboxes.pt"
     ADVERSARIAL_PATCH: "output/train/pointpillar_roihead_attack/final_adversarial_patch_checkpoint.pt"
     DETECTOR: "single"
     TARGET_COMPONENT: null
     TRAINING_COMPONENTS: []
 
 DATA_CONFIG:
-    _BASE_CONFIG_: configs/dataset_configs/kitti_carla_dataset.yaml
+    _BASE_CONFIG_: configs/dataset_configs/kitti_dataset.yaml
     GTBOXES: "data/gtound truth/gtboxes_pointpillar.pt"
 
     POINT_CLOUD_RANGE: [0, -39.68, -3, 69.12, 39.68, 1]

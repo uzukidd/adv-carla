@@ -35,122 +35,6 @@ import os
 import time
 
 
-
-class query_attack(nn.Module):
-    
-    def __init__(self, 
-                 args, 
-                 cfg,
-                 surrogate_dataset: adv_dataset, 
-                 victim_dataset: adv_dataset, 
-                 surrogate_model:nn.Module,
-                 victim_model:nn.Module,
-                 target_component_name:str = None,):
-        super().__init__()
-        self.args = args
-        self.cfg = cfg
-        self.surrogate_dataset = surrogate_dataset
-        self.victim_dataset = victim_dataset
-        self.surrogate_model = surrogate_model
-        self.victim_model = victim_model
-        self.car_rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = True,
-                 frozen_logit = False,
-                 confidence_threshold = 0.1,
-                 iou_threshold = 0.1, 
-                 verbose = False)
-        self.target_component = None
-        
-        if self.args.surrogate_stage_1:
-            assert target_component_name is not None
-            for idx, module in enumerate(self.surrogate_model.module_list):
-                if module._get_name() == target_component_name:
-                    self.target_component = module
-
-            
-        
-    def black_box_forward(self, 
-                        index,
-                        adversarial_parameters):
-        
-        batch_dict = self.victim_dataset.__getitem__(index,
-                                        adversarial_parameters = adversarial_parameters)
-        gt_boxes = batch_dict['gt_boxes']
-        
-        pred_dicts, _ = self.victim_model(batch_dict)
-        car_mesh_single_loss = self.car_rbbox_loss_func(batch_dict = pred_dicts[0], 
-                                gt_boxes = gt_boxes, 
-                                target_class = 1,
-                                logit_normal = "sigmoid",
-                                detector_type = "single",
-                                ret_part_loss = False)
-        return car_mesh_single_loss.item()
-    
-    def forward(self, 
-                index):
-        surrogate_batch_dict = self.surrogate_dataset.__getitem__(index)
-        
-        gt_boxes = surrogate_batch_dict['gt_boxes']
-        if not torch.eq(gt_boxes[0, :, 7], 1).any():
-            return
-        
-        original_parameter = [
-            para.clone().detach() for para in self.surrogate_dataset.get_adversarial_parameter()
-        ]
-        self.surrogate_model.zero_grad()
-        pred_dicts, _ = self.surrogate_model(surrogate_batch_dict)
-        if self.args.surrogate_stage_1:
-            car_mesh_loss = self.car_rbbox_loss_func(batch_dict = self.target_component.forward_ret_dict, 
-                                    gt_boxes = gt_boxes, 
-                                    target_class = 1,
-                                    logit_normal = "sigmoid",
-                                    detector_type = "rcnn",
-                                    ret_part_loss = False)
-        else:
-            car_mesh_loss = self.car_rbbox_loss_func(batch_dict = pred_dicts[0], 
-                                    gt_boxes = gt_boxes, 
-                                    target_class = 1,
-                                    logit_normal = "sigmoid",
-                                    detector_type = "single",
-                                    ret_part_loss = False)
-
-        regular_loss = self.surrogate_dataset.universal_adv_patch_car.get_regularization_loss()
-        total_loss = car_mesh_loss + self.args.laplacian_weights * regular_loss
-        total_loss.backward()
-        global_translation_grad, theta_grad, vert_grad = (para.grad for para in self.surrogate_dataset.universal_adv_patch_car.get_parameters())
-        
-        if global_translation_grad is None:
-            return
-        
-        best_loss = self.black_box_forward(index,
-                               original_parameter,)
-        
-        global_translation_grad[2] = 0.
-        vert_grad[:, 2] = 0.
-        
-        global_translation_grad_norm = torch.linalg.norm(global_translation_grad)
-        global_translation_grad_norm[global_translation_grad_norm < 1e-5] = 1e-5
-        global_translation_grad_norm = global_translation_grad / global_translation_grad_norm
-        
-        vert_grad_norm = torch.linalg.norm(vert_grad, dim=1)
-        vert_grad_norm[vert_grad_norm < 1e-5] = 1e-5
-        vert_grad_norm = vert_grad / vert_grad_norm[:, None]
-        theta_grad_norm = torch.sign(theta_grad)
-
-
-        for eps in [-self.args.learning_rate, self.args.learning_rate]:
-        
-            cur_parameter = [original_parameter[0] + eps * global_translation_grad_norm,
-                            original_parameter[1] + eps * theta_grad_norm,
-                            original_parameter[2] + eps * vert_grad_norm,]
-            cur_loss = self.black_box_forward(index,
-                                cur_parameter)
-
-            if cur_loss < best_loss:
-                best_loss = cur_loss
-                self.surrogate_dataset.universal_adv_patch_car.load_parameter(cur_parameter)
-                self.victim_dataset.universal_adv_patch_car.load_parameter(cur_parameter)
-
-
 def vis_adv_examples(kitti_adv_dataset):
     fig = plot_scene({
         "original": {
@@ -166,6 +50,8 @@ def vis_adv_examples(kitti_adv_dataset):
 
 def eval_data(args, cfg, adv_enabled, model, dataset, logger):
     model.eval()
+    for idx, module in enumerate(model.module_list):
+        module.eval()
     dataset.enable_adversarial_patch(adv_enabled)
     eval_utils.eval_one_epoch(
             cfg,
@@ -192,6 +78,7 @@ def parse_config():
     args.add_argument('--device', type=int, default=0, help='device')
     args.add_argument('--EVAL_OUTPUT_DIR', type=str, default="./eval_output/", help='evaluation output directory')
     
+    args.add_argument('--patch-ckpt', type=str, default=None, help='checkpoint of adversarial patch')
     args.add_argument('--cfg-file', type=str, default="configs/attack_configs/relevant_bounding_box_pointpillar.yaml", help='configuration file')
     
     args.add_argument('--BATCH_SIZE', type=int, default=1, help='batch size')
@@ -216,10 +103,9 @@ def parse_config():
     
     args.add_argument('--stage-1-loss-reduce-func', type=str, default="physical_loss")
     args.add_argument('--stage-2-loss-reduce-func', type=str, default="score_multiply_iou3d")
-    args.add_argument("--surrogate-stage-1", type=bool, default=False)
+    args.add_argument("--surrogate-stage-1", action='store_true')
 
     args = args.parse_args()
-
     ### Load the configuration file and set up the logger
     cfg_from_yaml_file(args.cfg_file, cfg)
 
@@ -340,6 +226,8 @@ def main():
     elif attack_method == "evaluate" or attack_method == "inference":
         if attack_cfg.ADVERSARIAL_PATCH is not None:
             adv_pipeline.load_adversarial_parameter(attack_cfg.ADVERSARIAL_PATCH)
+        elif args.patch_ckpt is not None:
+            adv_pipeline.load_adversarial_parameter(args.patch_ckpt)
 
     
     if args.eval_clean_data:

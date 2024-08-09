@@ -172,67 +172,11 @@ def run_one_epoch_white_box_attack(args,
                 
                 theta_grad_norm = torch.sign(theta_grad)
                 
-                cur_parameter = [original_parameter[0] + args.learning_rate * global_translation_grad_norm,
-                        original_parameter[1] + args.learning_rate * theta_grad_norm,
-                        original_parameter[2] + args.learning_rate * vert_grad_norm,]
+                cur_parameter = [original_parameter[0] - args.learning_rate * global_translation_grad_norm,
+                        original_parameter[1] - args.learning_rate * theta_grad_norm,
+                        original_parameter[2] - args.learning_rate * vert_grad_norm,]
                 
                 dataset.universal_adv_patch_car.load_parameter(cur_parameter)
             else:
                 raise NotImplementedError
             
-            
-# class loss_wise_full_attack(nn.Module):
-    
-#     def __init__(self, args, ):
-#         super().__init__()
-#         self.args = args
-#         self.car_rbbox_loss_func = relevant_bounding_box_loss(frozen_iou = args.iou_frozen,
-#                  frozen_logit = args.logit_frozen,
-#                  confidence_threshold = 0.1,
-#                  iou_threshold = 0.1, 
-#                  verbose = False)
-    
-#     def forward(self, gt_boxes, first_dict = None, second_dict = None):
-#         mesh_loss = None
-#         if self.args.mode < -2:
-#             iou3d, masked_cls_preds, masked_cls_preds_extended = self.car_rbbox_loss_func(batch_dict = first_dict, 
-#                                     gt_boxes = gt_boxes, 
-#                                     target_class = 1,
-#                                     logit_normal = "None",
-#                                     detector_type = "rcnn",
-#                                     ret_part_loss = True)
-            
-#             if self.args.mode == -3:
-#                 mesh_loss = (iou3d * masked_cls_preds_extended).sum()
-#         if self.args.mode < 2:
-#             iou3d, masked_cls_preds, masked_cls_preds_extended = self.car_rbbox_loss_func(batch_dict = first_dict, 
-#                                     gt_boxes = gt_boxes, 
-#                                     target_class = 1,
-#                                     logit_normal = "sigmoid",
-#                                     detector_type = "rcnn",
-#                                     ret_part_loss = True)
-#             if self.args.mode == 0:
-#                 mesh_loss = iou3d.sum()
-#             elif self.args.mode == 1:
-#                 mesh_loss = masked_cls_preds.sum()
-#             elif self.args.mode == -1:
-#                 mesh_loss = -1.0 * torch.log(1.0 - masked_cls_preds).sum()
-#             elif self.args.mode == -2:
-#                 mesh_loss = (iou3d * masked_cls_preds_extended).sum()
-
-#         elif self.args.mode >= 2:
-#             iou3d, masked_cls_preds, masked_cls_preds_extended = self.car_rbbox_loss_func(batch_dict = second_dict, 
-#                                 gt_boxes = gt_boxes, 
-#                                 target_class = 1,
-#                                 logit_normal = "sigmoid",
-#                                 detector_type = "single",
-#                                 ret_part_loss = True)
-#             if self.args.mode == 2:
-#                 mesh_loss = iou3d.sum()
-#             elif self.args.mode == 3:
-#                 mesh_loss = masked_cls_preds.sum()
-#             elif self.args.mode == 4:
-#                 mesh_loss = torch.sigmoid(masked_cls_preds).sum()
-#             elif self.args.mode == 5:
-#                 mesh_loss = (torch.sigmoid(masked_cls_preds_extended) * iou3d).sum()
-#         return mesh_loss

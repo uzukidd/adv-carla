@@ -7,8 +7,9 @@ def log1m_sigmoid(x):
     $$
     \text{log1m_sigmoid}(x) = -x - \log(1+\exp(-x)) = \log(1 - \text{sigmoid}(x)) = \log(1 - \text{score})
     $$
+        log(1- 1/(1 + exp(-x))) = log((1+exp(-x)-1)/(1 + exp(-x)) = log(exp(-x)/(1 + exp(-x)) = -x - log(1 + exp(-x))
     """
-    return -x - torch.log1p(torch.exp(-x))
+    return - x - torch.log1p(torch.exp(-x))
 
 def monocular_logit(iou3d: torch.Tensor, 
                         masked_cls_preds: torch.Tensor, 
@@ -89,7 +90,7 @@ def entropy_score_loss(iou3d: torch.Tensor,
     \text{Loss} = -\log(1 - \text{score})\\ \text{w.r.t}\quad \text{score} = \sigma (\text{Logit})
     $$
     """
-    total_loss = log1m_sigmoid(masked_cls_preds)
+    total_loss = -1 * log1m_sigmoid(masked_cls_preds)
     
     overflow_mask = torch.logical_or(torch.isnan(total_loss),  
                                      torch.isinf(total_loss))
@@ -112,7 +113,7 @@ def physical_loss(iou3d: torch.Tensor,
     \text{Loss} = -\text{IoU} \cdot \log(1 - \text{score})\\ \text{w.r.t}\quad \text{score} = \sigma (\text{Logit})
     $$
     """
-    total_loss = log1m_sigmoid(masked_cls_preds_extended) * iou3d
+    total_loss = -1 * log1m_sigmoid(masked_cls_preds_extended) * iou3d
     
     overflow_mask = torch.logical_or(torch.isnan(total_loss),  
                                      torch.isinf(total_loss))

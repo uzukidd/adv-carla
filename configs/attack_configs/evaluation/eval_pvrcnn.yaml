@@ -1,14 +1,14 @@
-ATTACK_METHOD : "optimize"
-
+ATTACK_METHOD : "evaluate"
 ATTACK_CONFIG: 
     ROOFTOP_ANNOTATE: "data/rooftop_approximation/rooftop_appro_kitti.pkl"
-    DETECTOR: "single"
-    TARGET_COMPONENT: null
-    TRAINING_COMPONENTS: [VoxelBackBone8x]
+    ADVERSARIAL_PATCH: null
+    DETECTOR: "rcnn"
+    TARGET_COMPONENT: AnchorHeadSingle
+    TRAINING_COMPONENTS: []
 
 DATA_CONFIG:
     _BASE_CONFIG_: configs/dataset_configs/kitti_dataset.yaml
-
+    
     DATA_PROCESSOR:
         - NAME: mask_points_and_boxes_outside_range
           REMOVE_OUTSIDE_BOXES: True
@@ -32,5 +32,5 @@ DATA_CONFIG:
           }
 
 MODEL:
-    _BASE_CONFIG_: configs/model_configs/second.yaml
-    CKPT_PATH: "/home/ksas/Public/model_zoo/pcdet/second_7862.pth"
+    _BASE_CONFIG_: configs/model_configs/pv_rcnn.yaml
+    CKPT_PATH: "/home/ksas/Public/model_zoo/pcdet/pv_rcnn_8369.pth"
