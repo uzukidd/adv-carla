@@ -178,15 +178,26 @@ class kitti_carla_dataset(DatasetTemplate):
         )
         self.ext = ext
         self.frames_path = Path(dataset_cfg.DATA_PATH) / Path("generated/frames")
+        self.calib_path = Path(dataset_cfg.DATA_PATH) / Path("generated/lidar_to_cam0.txt")
         self.frames = sorted(glob.glob(str(self.frames_path) + f"/frame*{self.ext}"))
-        self.gtboxes = None
         
+        self.gtboxes = None
+        self.class_names = class_names
+
         if dataset_cfg.GTBOXES is not None:
             self.gtboxes = torch.load(dataset_cfg.GTBOXES)
         
         if self.logger is not None:
             self.logger.info('Total samples for KITTI-CARLA dataset: %d' % (len(self)))
+
+        self.load_calib()
             
+    def load_calib(self):
+        with open(self.calib_path, 'r') as pos_file:
+            line = pos_file.readlines()[-1].split()
+            tf = np.vstack((np.array(line, float).reshape(3,4), [0,0,0,1]))
+            self.tf_lidar_to_cam0 = tf
+
     def prepare_predicted_gtboxes(self, 
                                   surrogate_model:nn.Module,
                                   path:str = None):
@@ -259,6 +270,77 @@ class kitti_carla_dataset(DatasetTemplate):
         Car 3D@0.7\t{recall_3D}
         """
         return result_str, {"recall_BEV":recall_BEV, "recall_3D":recall_3D}
+    
+    def prepare_kitti_det_annos(self, batch_index, box_dict):
+        
+        def get_template_prediction(num_samples):
+            ret_dict = {
+                'name': np.zeros(num_samples), 'truncated': np.zeros(num_samples),
+                'occluded': np.zeros(num_samples), 'alpha': np.zeros(num_samples),
+                'bbox': np.tile(np.array([0., 0., 0., 50.]), (num_samples, 1)), 'dimensions': np.zeros([num_samples, 3]),
+                'location': np.zeros([num_samples, 3]), 'rotation_y': np.zeros(num_samples),
+                'score': np.zeros(num_samples), 'boxes_lidar': np.zeros([num_samples, 7])
+            }
+            return ret_dict
+        
+        pred_scores = box_dict['score']
+        pred_boxes = box_dict['boxes_lidar']
+        pred_labels = box_dict['pred_labels']
+        pred_dict = get_template_prediction(pred_scores.shape[0])
+        if pred_scores.shape[0] == 0:
+            return pred_dict
+
+        # calib = batch_dict['calib'][batch_index]
+        # image_shape = batch_dict['image_shape'][batch_index].cpu().numpy()
+        # pred_boxes_camera = box_utils.boxes3d_lidar_to_kitti_camera(pred_boxes, calib)
+        # pred_boxes_img = box_utils.boxes3d_kitti_camera_to_imageboxes(
+        #     pred_boxes_camera, calib, image_shape=image_shape
+        # )
+        loc_camera = np.pad(pred_boxes[:, 0:3], ((0, 0), (0, 1)), constant_values=1).dot(self.tf_lidar_to_cam0.T)
+        pred_dict['name'] = np.array(self.class_names)[pred_labels - 1]
+        pred_dict['alpha'] = -np.arctan2(-pred_boxes[:, 1], pred_boxes[:, 0]) + 0.
+        pred_dict['dimensions'] = pred_boxes[:, 3:6]
+        pred_dict['location'] = loc_camera[:, 0:3]
+        pred_dict['rotation_y'] = pred_boxes[:, 6]
+        pred_dict['score'] = pred_scores
+        pred_dict['boxes_lidar'] = pred_boxes
+        
+        return pred_dict
+    
+    def prepare_kitti_gt_annos(self, batch_index, gt_boxes, gt_labels):
+        loc_camera = np.pad(gt_boxes[:, 0:3].cpu().numpy(), ((0, 0), (0, 1)), constant_values=1).dot(self.tf_lidar_to_cam0.T)
+        
+        annotations = {}
+        annotations['name'] = np.array(self.class_names)[gt_labels.cpu().numpy().reshape(-1).astype(int) - 1]
+        annotations['truncated'] = np.ones(gt_boxes.size(0)) * 0.
+        annotations['occluded'] = np.ones(gt_boxes.size(0)) * 0.
+        annotations['alpha'] = np.ones(gt_boxes.size(0)) * 0.
+        annotations['bbox'] = np.tile(np.array([0., 0., 0., 50.]), (gt_boxes.size(0), 1))
+        annotations['dimensions'] = gt_boxes[:, 3:6].cpu().numpy()
+        annotations['location'] = loc_camera[:, 0:3]
+        annotations['rotation_y'] = gt_boxes[:, 6].cpu().numpy()
+        annotations['score'] = np.ones(gt_boxes.size(0)) * 0.
+        annotations['difficulty'] = np.ones(gt_boxes.size(0)) * 1.
+
+        annotations['index'] = np.array(batch_index, dtype=np.int32)
+        annotations['gt_boxes_lidar'] = gt_boxes.cpu().numpy()
+        
+        return annotations
+
+        # {'alpha': array([-0.2]),
+        # 'bbox': array([[712.4 , 143.  , 810.73, 307.92]], dtype=float32),
+        # 'difficulty': array([0], dtype=int32),
+        # 'dimensions': array([[1.2 , 1.89, 0.48]]),
+        # 'gt_boxes_lidar': array([[ 8.73138142, -1.85591757, -0.65469939,  1.2       ,  0.48      ,
+        #         1.89      , -1.58079633]]),
+        # 'index': array([0], dtype=int32),
+        # 'location': array([[1.84, 1.47, 8.41]], dtype=float32),
+        # 'name': array(['Pedestrian'], dtype='<U10'),
+        # 'num_points_in_gt': array([377], dtype=int32),
+        # 'occluded': array([0.]),
+        # 'rotation_y': array([0.01]),
+        # 'score': array([-1.]),
+        # 'truncated': array([0.])}
 
     def __len__(self):
         return len(self.frames)
@@ -288,7 +370,7 @@ class kitti_carla_dataset(DatasetTemplate):
 
         data_dict = self.prepare_data(data_dict=input_dict)
         if self.gtboxes is not None:
-            input_dict["gt_boxes"] = self.gtboxes[index]
+            input_dict["gt_boxes"] = self.gtboxes[index].to(torch.device('cuda'))
 
         return data_dict
     

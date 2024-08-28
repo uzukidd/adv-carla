@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import tqdm
 
+from typing import Callable, Optional, Tuple, Dict
 from pcdet.models import load_data_to_gpu
 from pcdet.utils import common_utils
 
@@ -19,7 +20,7 @@ def statistics_info(cfg, ret_dict, metric, disp_dict):
         '(%d, %d) / %d' % (metric['recall_roi_%s' % str(min_thresh)], metric['recall_rcnn_%s' % str(min_thresh)], metric['gt_num'])
 
 
-def eval_one_epoch(cfg, args, model, dataloader, epoch_id, logger, dist_test=False, result_dir=None, infer_time=False):
+def eval_one_epoch(cfg, args, model, dataloader, epoch_id, logger, dist_test=False, result_dir=None, infer_time=False, custom_evaluation: Optional[Callable[...,  Tuple[str, Dict]]] = None):
     if result_dir is not None:
         result_dir.mkdir(parents=True, exist_ok=True)
         final_output_dir = result_dir / 'final_result' / 'data'
@@ -121,12 +122,18 @@ def eval_one_epoch(cfg, args, model, dataloader, epoch_id, logger, dist_test=Fal
 
     with open(result_dir / 'result.pkl', 'wb') as f:
         pickle.dump(det_annos, f)
-
-    result_str, result_dict = dataset.evaluation(
-        det_annos, class_names,
-        eval_metric=cfg.MODEL.POST_PROCESSING.EVAL_METRIC,
-        output_path=final_output_dir
-    )
+    if custom_evaluation is None:
+        result_str, result_dict = dataset.evaluation(
+            det_annos, class_names,
+            eval_metric=cfg.MODEL.POST_PROCESSING.EVAL_METRIC,
+            output_path=final_output_dir
+        )
+    else:
+        result_str, result_dict = custom_evaluation(
+            dataset, det_annos, class_names,
+            eval_metric=cfg.MODEL.POST_PROCESSING.EVAL_METRIC,
+            output_path=final_output_dir
+        )
 
     logger.info(result_str)
     ret_dict.update(result_dict)

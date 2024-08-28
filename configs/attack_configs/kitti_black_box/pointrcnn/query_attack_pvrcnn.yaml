@@ -1,3 +1,4 @@
+ATTACK_METHOD : "query"
 
 ATTACK_CONFIG: 
     ROOFTOP_ANNOTATE: "data/rooftop_approximation/rooftop_appro_kitti.pkl"
@@ -65,11 +66,9 @@ SURROGATE_DATA_CONFIG:
 
 
 MODEL:
-    CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
     _BASE_CONFIG_: configs/model_configs/pv_rcnn.yaml
     CKPT_PATH: "/home/ksas/Public/model_zoo/pcdet/pv_rcnn_8369.pth"
 
 SURROGATE_MODEL:
-    CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
     _BASE_CONFIG_: configs/model_configs/pointrcnn.yaml
     CKPT_PATH: "/home/ksas/Public/model_zoo/pcdet/pointrcnn_7870.pth"
