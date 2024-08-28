@@ -1,0 +1,21 @@
+cd ../..
+rm -rf output/train/loss_ablation/$1_s1/mislocalize_4
+rm -rf output/train/loss_ablation/$1_s1/misrecognize_4
+rm -rf output/train/loss_ablation/$1_s1/misrecognize_8
+rm -rf output/train/loss_ablation/$1_s1/comprehensive_4
+rm -rf output/train/loss_ablation/$1_s1/mislocalize_7
+rm -rf output/train/loss_ablation/$1_s1/mislocalize_9
+rm -rf output/train/loss_ablation/$1_s1/misrecognize_9
+rm -rf output/train/loss_ablation/$1_s1/misrecognize_10
+rm -rf output/train/loss_ablation/$1_s1/comprehensive_9
+
+
+python main.py --exp-name loss_ablation/$1_s1/mislocalize_4 --headbox-attack --logit-frozen --stage-1-loss-reduce-func physical_loss --optim ifgsm --learning-rate $3 --cfg-file configs/attack_configs/kitti/relevant_bounding_box_$1.yaml --device $2
+python main.py --exp-name loss_ablation/$1_s1/mislocalize_7 --headbox-attack --logit-frozen --stage-1-loss-reduce-func monocular_iou --optim ifgsm --learning-rate $3 --cfg-file configs/attack_configs/kitti/relevant_bounding_box_$1.yaml --device $2
+python main.py --exp-name loss_ablation/$1_s1/mislocalize_9 --headbox-attack --logit-frozen --stage-1-loss-reduce-func score_multiply_iou3d --optim ifgsm --learning-rate $3 --cfg-file configs/attack_configs/kitti/relevant_bounding_box_$1.yaml --device $2
+python main.py --exp-name loss_ablation/$1_s1/misrecognize_4 --headbox-attack --iou-frozen --stage-1-loss-reduce-func physical_loss --optim ifgsm --learning-rate $3 --cfg-file configs/attack_configs/kitti/relevant_bounding_box_$1.yaml --device $2
+python main.py --exp-name loss_ablation/$1_s1/misrecognize_8 --headbox-attack --iou-frozen --stage-1-loss-reduce-func entropy_score_loss --optim ifgsm --learning-rate $3 --cfg-file configs/attack_configs/kitti/relevant_bounding_box_$1.yaml --device $2
+python main.py --exp-name loss_ablation/$1_s1/misrecognize_9 --headbox-attack --iou-frozen --stage-1-loss-reduce-func score_multiply_iou3d --optim ifgsm --learning-rate $3 --cfg-file configs/attack_configs/kitti/relevant_bounding_box_$1.yaml --device $2
+python main.py --exp-name loss_ablation/$1_s1/misrecognize_10 --headbox-attack --iou-frozen --stage-1-loss-reduce-func logit_multiply_iou3d --optim ifgsm --learning-rate $3 --cfg-file configs/attack_configs/kitti/relevant_bounding_box_$1.yaml --device $2
+python main.py --exp-name loss_ablation/$1_s1/comprehensive_4  --headbox-attack --stage-1-loss-reduce-func physical_loss --optim ifgsm --learning-rate $3 --cfg-file configs/attack_configs/kitti/relevant_bounding_box_$1.yaml --device $2
+python main.py --exp-name loss_ablation/$1_s1/comprehensive_9  --headbox-attack --stage-1-loss-reduce-func score_multiply_iou3d --optim ifgsm --learning-rate $3 --cfg-file configs/attack_configs/kitti/relevant_bounding_box_$1.yaml --device $2

@@ -1,14 +1,14 @@
 ATTACK_METHOD : "evaluate"
 ATTACK_CONFIG: 
-    ROOFTOP_ANNOTATE: "data/rooftop_approximation/kitti_carla_pointrcnn.pkl"
-    ADVERSARIAL_PATCH: "data/gtound truth/inference_models/pointrcnn/gtboxes.pt"
+    ROOFTOP_ANNOTATE: "data/rooftop_approximation/rooftop_appro_kitticarla_pointrcnn.pkl"
+    ADVERSARIAL_PATCH: Null
     DETECTOR: "rcnn"
     TARGET_COMPONENT: "PointHeadBox"
     TRAINING_COMPONENTS: []
 
 DATA_CONFIG:
     _BASE_CONFIG_: configs/dataset_configs/kitti_carla_dataset.yaml
-    GTBOXES: "data/gtound truth/gtboxes_pointrcnn.pt"
+    GTBOXES: "data/gtound truth/inference_models/pointrcnn/gtboxes.pt"
     DATA_PROCESSOR:
         -   NAME: mask_points_and_boxes_outside_range
             REMOVE_OUTSIDE_BOXES: True

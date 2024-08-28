@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import random
 
 from pathlib import Path
 torch.autograd.set_detect_anomaly(True)
@@ -20,6 +21,7 @@ from pytorch3d.vis.plotly_vis import plot_scene
 
 from pcdet.config import cfg, cfg_from_yaml_file
 from pcdet.datasets import build_dataloader
+from pcdet.datasets.kitti.kitti_object_eval_python.eval import eval_class, get_mAP, get_mAP_R40
 from pcdet.models import build_network
 from pcdet.utils import common_utils
 
@@ -29,10 +31,168 @@ from loss_utils import relevant_bounding_box_loss
 from white_box_attack import run_one_epoch_white_box_attack
 from query_attack import run_one_epoch_query_attack
 
+import json
 import pdb
 import argparse
 import os
 import time
+import copy
+from typing import Callable, Optional, Tuple, Dict
+
+from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d, cal_iou
+
+def kitti_recall_evaluation(self, det_annos, class_names, **kwargs):
+        eval_det_annos = copy.deepcopy(det_annos)
+        eval_gt_annos = [copy.deepcopy(info['annos']) for info in self.kitti_infos]
+        
+        recall_BEV = 0
+        recall_3D = 0
+        
+        gt_boxes_count = 0
+        
+        # eval_gt_annos = [annos for annos in eval_gt_annos if annos["name"].item() == "Car"]
+        # eval_det_annos = [annos for annos in eval_det_annos if annos["name"].item() == "Car"]
+        name2vec = {'Car': 1, 'Pedestrian': 2, 'Cyclist': 3}
+        for i, (det_anno, gt_anno) in enumerate(zip(eval_det_annos, eval_gt_annos)):
+            pass
+            # loc = gt_anno["location"]
+            # dims = gt_anno["dimensions"]
+            # rots = gt_anno["rotation_y"]
+            
+            # gt_difficulty = gt_anno["difficulty"]
+            # gt_boxes = np.concatenate(
+            #     [loc, dims, rots[..., np.newaxis]], axis=1)
+            # gt_labels = gt_anno["name"]
+            # gt_labels = np.array([name2vec.get(s, -1) for s in gt_labels])
+            
+            # gt_label_mask = (gt_labels == 1)
+            # gt_boxes = gt_boxes[gt_label_mask]
+            # gt_labels = gt_labels[gt_label_mask]
+            # gt_difficulty = gt_difficulty[gt_label_mask]
+            
+            # gt_difficulty_mask = (gt_difficulty <= 1)
+            # gt_boxes = gt_boxes[gt_difficulty_mask]
+            # gt_labels = gt_labels[gt_difficulty_mask]
+            # gt_difficulty = gt_difficulty[gt_difficulty_mask]
+            
+            # gt_boxes = torch.from_numpy(gt_boxes).float().cuda()
+            # gt_labels = torch.from_numpy(gt_labels).float().cuda()
+
+            
+            # loc = det_anno["location"]
+            # dims = det_anno["dimensions"]
+            # rots = det_anno["rotation_y"]
+            # dt_boxes = np.concatenate(
+            #     [loc, dims, rots[..., np.newaxis]], axis=1)
+            # dt_labels = det_anno["name"]
+            # dt_labels = np.array([name2vec.get(s, -1) for s in dt_labels])
+            # dt_label_mask = (dt_labels == 1)
+            
+            # dt_boxes = dt_boxes[dt_label_mask]
+            # dt_labels = dt_labels[dt_label_mask]
+            
+            # dt_boxes = torch.from_numpy(dt_boxes).float().cuda()
+            # dt_labels = torch.from_numpy(dt_labels).float().cuda()
+            
+            # M = gt_boxes.size(0)
+            # N = dt_boxes.size(0)
+            # gt_boxes_count += M
+            
+            # if M == 0 or N == 0:
+            #     continue
+
+            # box3d_gt_extended = gt_boxes.view(M, 1, 7).expand(-1, N, -1)
+            # box3d_bl_extended = dt_boxes.view(1, N, 7).expand(M, -1, -1)
+            # # iou3d [M, N]
+            # iou2d, _, _, _ = cal_iou(box3d_gt_extended[..., [0, 1, 3, 4, 6]], box3d_bl_extended[..., [0, 1, 3, 4, 6]])
+            # iou3d = cal_iou_3d(box3d_gt_extended, box3d_bl_extended)
+
+            # recall_BEV += (torch.max(iou2d, dim = 1).values >= 0.7).sum().item()
+            # recall_3D += (torch.max(iou3d, dim = 1).values >= 0.7).sum().item()
+        
+        # recall_BEV = recall_BEV/gt_boxes_count
+        # recall_3D = recall_3D/gt_boxes_count
+        
+        # result_str = f"""
+        # Car BEV@0.7\t{recall_BEV}
+        # Car 3D@0.7\t{recall_3D}
+        # """
+        
+        return "", {}
+        
+        return result_str, {"recall_BEV":recall_BEV, "recall_3D":recall_3D}
+
+def kitti_carla_recall_evaluation(self:kitti_carla_dataset, det_annos, class_names, **kwargs):
+        recall_BEV = 0
+        recall_3D = 0
+        
+        gt_boxes_count = 0
+        eval_gt_annos = []
+        eval_det_annos = []
+        overlap_0_7 = np.array([[0.7], [0.7],
+                            [0.7]])
+        overlap_0_5 = np.array([[0.7], [0.5],
+                                [0.5]])
+        min_overlaps = np.stack([overlap_0_7, overlap_0_5], axis=0)
+        for i, det_anno in enumerate(det_annos):
+            gt_boxes = self.gtboxes[i]
+            gt_boxes, gt_labels = torch.split(gt_boxes, [7, 1], dim=1)
+            gt_boxes = gt_boxes[gt_labels.view(-1) == 1]
+            
+            eval_det_annos.append(self.prepare_kitti_det_annos(i, det_anno))
+            eval_gt_annos.append(self.prepare_kitti_gt_annos(i, gt_boxes, gt_labels))
+
+        ret = eval_class(eval_gt_annos, eval_det_annos, [0], [1], 1,
+                    min_overlaps)
+        mAP_bev = get_mAP(ret["precision"]).reshape(-1)
+        mAP_bev_R40 = get_mAP_R40(ret["precision"]).reshape(-1)
+        
+        ret = eval_class(eval_gt_annos, eval_det_annos, [0], [1], 2,
+                    min_overlaps)
+        mAP_3d = get_mAP(ret["precision"]).reshape(-1)
+        mAP_3d_R40 = get_mAP_R40(ret["precision"]).reshape(-1)
+        
+
+            # pred_labels = torch.from_numpy(det_anno["pred_labels"]).to(gt_boxes.device)
+            # score = torch.from_numpy(det_anno["score"]).to(gt_boxes.device)
+            # boxes_lidar = torch.from_numpy(det_anno["boxes_lidar"]).to(gt_boxes.device)
+            # boxes_lidar = boxes_lidar[pred_labels == 1]
+            
+            # M = gt_boxes.size(0)
+            # N = boxes_lidar.size(0)
+            # gt_boxes_count += M
+            
+            # if M == 0 or N == 0:
+            #     continue
+
+            # box3d_gt_extended = gt_boxes.view(M, 1, 7).expand(-1, N, -1)
+            # box3d_bl_extended = boxes_lidar.view(1, N, 7).expand(M, -1, -1)
+            # # iou3d [M, N]
+            # iou2d, _, _, _ = cal_iou(box3d_gt_extended[..., [0, 1, 3, 4, 6]], box3d_bl_extended[..., [0, 1, 3, 4, 6]])
+            # iou3d = cal_iou_3d(box3d_gt_extended, box3d_bl_extended)
+
+            # recall_BEV += (torch.max(iou2d, dim = 1).values >= 0.7).sum().item()
+            # recall_3D += (torch.max(iou3d, dim = 1).values >= 0.7).sum().item()
+        
+        # recall_BEV = recall_BEV/gt_boxes_count
+        # recall_3D = recall_3D/gt_boxes_count
+        result_str = f"""Car AP@0.70, 0.70:
+bev  AP:{mAP_bev[0].item():.4f}
+3d   AP:{mAP_3d[0].item():.4f}
+Car AP_R40@0.70, 0.70:
+bev  AP:{mAP_bev_R40[0].item():.4f}
+3d   AP:{mAP_3d_R40[0].item():.4f}
+Car AP@0.50, 0.50:
+bev  AP:{mAP_bev[1].item():.4f}
+3d   AP:{mAP_bev[1].item():.4f}
+Car AP_R40@0.50, 0.50:
+bev  AP:{mAP_bev_R40[1].item():.4f}
+3d   AP:{mAP_3d_R40[1].item():.4f}
+        """
+        return result_str, {"Car_bev":mAP_bev.tolist(), 
+                    "Car_bev_r40":mAP_bev_R40.tolist(),
+                    "Car_3d": mAP_3d.tolist(),
+                    "Car_3d_r40": mAP_3d_R40.tolist()}
 
 
 def vis_adv_examples(kitti_adv_dataset):
@@ -48,12 +208,12 @@ def vis_adv_examples(kitti_adv_dataset):
     fig.show()
 
 
-def eval_data(args, cfg, adv_enabled, model, dataset, logger):
+def eval_data(args, cfg, adv_enabled, model, dataset, logger, custom_evaluation: Optional[Callable[...,  Tuple[str, Dict]]] = None):
     model.eval()
     for idx, module in enumerate(model.module_list):
         module.eval()
     dataset.enable_adversarial_patch(adv_enabled)
-    eval_utils.eval_one_epoch(
+    ret_dict = eval_utils.eval_one_epoch(
             cfg,
             args = None,
             model = model,
@@ -62,9 +222,10 @@ def eval_data(args, cfg, adv_enabled, model, dataset, logger):
             logger = logger,
             dist_test = args.DIST_TEST,
             result_dir = Path(args.EVAL_OUTPUT_DIR),
-            infer_time = True
+            infer_time = True,
+            custom_evaluation = custom_evaluation,
         )
-
+    return ret_dict
 
 
 def components_of_model(model, logger):
@@ -115,6 +276,7 @@ def parse_config():
 
 def set_seed_and_device(args):
     ### Set the seed for numpy, torch, and device for cuda
+    random.seed(args.UNI_RANDOM_SEED)
     np.random.seed(args.UNI_RANDOM_SEED) 
     torch.manual_seed(args.UNI_RANDOM_SEED)
 
@@ -163,7 +325,7 @@ def load_dataset(args, dataset_cfg, class_names, logger):
 def build_model_pipeline(args, logger, lidar, dataset_cfg,
                           model_cfg,
                           attack_cfg):
-    
+
     dataset = load_dataset(args, dataset_cfg, model_cfg.CLASS_NAMES, logger)
     logger.info(f'Class names of samples: \t{dataset.class_names}')
 
@@ -210,6 +372,11 @@ def main():
                    azi_range=[-90, 90],
                    polar_range= [-2.18, 2.0],
                    polar_num=10, azi_res=0.08)
+    if dataset_cfg.DATASET == "KittiDataset":
+        recall_evaluation = kitti_recall_evaluation
+        
+    elif dataset_cfg.DATASET == "KittiCarlaDataset":
+        recall_evaluation = kitti_carla_recall_evaluation
     
     dataset, model, adv_pipeline = build_model_pipeline(args, logger, lidar, dataset_cfg,
                           model_cfg,
@@ -232,22 +399,26 @@ def main():
     
     if args.eval_clean_data:
         logger.info("Evaluate the clean data")
-        eval_data(args = args, 
+        eval_ret_dict = eval_data(args = args, 
                 cfg = cfg,
                 adv_enabled = False, 
                 model = model, 
                 dataset = adv_pipeline, 
                 logger = logger)
+        with open(os.path.join(args.SAVE_PATH, "evaluation_result.json"), "w") as json_file:
+            json.dump(eval_ret_dict, json_file, indent=4)
         return
     
     if args.eval_init_patch:
         logger.info("Evaluate the initial patch")
-        eval_data(args = args, 
+        eval_ret_dict = eval_data(args = args, 
                 cfg = cfg,
                 adv_enabled = True, 
                 model = model, 
                 dataset = adv_pipeline, 
                 logger = logger)
+        with open(os.path.join(args.SAVE_PATH, "evaluation_result.json"), "w") as json_file:
+            json.dump(eval_ret_dict, json_file, indent=4)
         return
     
     ### Evaluate patch attack with one epoch
@@ -276,12 +447,15 @@ def main():
                 verbose_epoch = args.verbose_epoch)
     elif attack_method == "evaluate":
         logger.info("Evaluate final patch")
-        eval_data(args = args, 
+        eval_ret_dict = eval_data(args = args, 
                 cfg = cfg,
                 adv_enabled = True, 
                 model = model, 
                 dataset = adv_pipeline, 
-                logger = logger)
+                logger = logger,
+                custom_evaluation = recall_evaluation)
+        with open(os.path.join(args.SAVE_PATH, "evaluation_result.json"), "w") as json_file:
+            json.dump(eval_ret_dict, json_file, indent=4)
         return
     elif attack_method == "inference":
         adv_pipeline.prepare_predicted_gtboxes(path = os.path.join(args.SAVE_PATH, "gtboxes.pt"))
@@ -296,12 +470,14 @@ def main():
 
     ### Evaluate the adversarial examples
     logger.info("Evaluate the final patch")
-    eval_data(args = args, 
+    eval_ret_dict = eval_data(args = args, 
             cfg = cfg,
             adv_enabled = True, 
             model = model, 
             dataset = adv_pipeline, 
             logger = logger)
+    with open(os.path.join(args.SAVE_PATH, "evaluation_result.json"), "w") as json_file:
+        json.dump(eval_ret_dict, json_file, indent=4)
 
 if __name__ == "__main__":
     main()
