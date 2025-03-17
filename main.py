@@ -25,9 +25,8 @@ from pcdet.datasets.kitti.kitti_object_eval_python.eval import eval_class, get_m
 from pcdet.models import build_network
 from pcdet.utils import common_utils
 
-from data_tools import adv_dataset, kitti_carla_dataset
+from data_tools import adv_dataset, kitti_carla_dataset, outdoor_demo_dataset
 from eval_utils import eval_utils
-from loss_utils import relevant_bounding_box_loss
 from white_box_attack import run_one_epoch_white_box_attack
 from query_attack import run_one_epoch_query_attack
 
@@ -38,89 +37,6 @@ import os
 import time
 import copy
 from typing import Callable, Optional, Tuple, Dict
-
-from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d, cal_iou
-
-def kitti_recall_evaluation(self, det_annos, class_names, **kwargs):
-        eval_det_annos = copy.deepcopy(det_annos)
-        eval_gt_annos = [copy.deepcopy(info['annos']) for info in self.kitti_infos]
-        
-        recall_BEV = 0
-        recall_3D = 0
-        
-        gt_boxes_count = 0
-        
-        # eval_gt_annos = [annos for annos in eval_gt_annos if annos["name"].item() == "Car"]
-        # eval_det_annos = [annos for annos in eval_det_annos if annos["name"].item() == "Car"]
-        name2vec = {'Car': 1, 'Pedestrian': 2, 'Cyclist': 3}
-        for i, (det_anno, gt_anno) in enumerate(zip(eval_det_annos, eval_gt_annos)):
-            pass
-            # loc = gt_anno["location"]
-            # dims = gt_anno["dimensions"]
-            # rots = gt_anno["rotation_y"]
-            
-            # gt_difficulty = gt_anno["difficulty"]
-            # gt_boxes = np.concatenate(
-            #     [loc, dims, rots[..., np.newaxis]], axis=1)
-            # gt_labels = gt_anno["name"]
-            # gt_labels = np.array([name2vec.get(s, -1) for s in gt_labels])
-            
-            # gt_label_mask = (gt_labels == 1)
-            # gt_boxes = gt_boxes[gt_label_mask]
-            # gt_labels = gt_labels[gt_label_mask]
-            # gt_difficulty = gt_difficulty[gt_label_mask]
-            
-            # gt_difficulty_mask = (gt_difficulty <= 1)
-            # gt_boxes = gt_boxes[gt_difficulty_mask]
-            # gt_labels = gt_labels[gt_difficulty_mask]
-            # gt_difficulty = gt_difficulty[gt_difficulty_mask]
-            
-            # gt_boxes = torch.from_numpy(gt_boxes).float().cuda()
-            # gt_labels = torch.from_numpy(gt_labels).float().cuda()
-
-            
-            # loc = det_anno["location"]
-            # dims = det_anno["dimensions"]
-            # rots = det_anno["rotation_y"]
-            # dt_boxes = np.concatenate(
-            #     [loc, dims, rots[..., np.newaxis]], axis=1)
-            # dt_labels = det_anno["name"]
-            # dt_labels = np.array([name2vec.get(s, -1) for s in dt_labels])
-            # dt_label_mask = (dt_labels == 1)
-            
-            # dt_boxes = dt_boxes[dt_label_mask]
-            # dt_labels = dt_labels[dt_label_mask]
-            
-            # dt_boxes = torch.from_numpy(dt_boxes).float().cuda()
-            # dt_labels = torch.from_numpy(dt_labels).float().cuda()
-            
-            # M = gt_boxes.size(0)
-            # N = dt_boxes.size(0)
-            # gt_boxes_count += M
-            
-            # if M == 0 or N == 0:
-            #     continue
-
-            # box3d_gt_extended = gt_boxes.view(M, 1, 7).expand(-1, N, -1)
-            # box3d_bl_extended = dt_boxes.view(1, N, 7).expand(M, -1, -1)
-            # # iou3d [M, N]
-            # iou2d, _, _, _ = cal_iou(box3d_gt_extended[..., [0, 1, 3, 4, 6]], box3d_bl_extended[..., [0, 1, 3, 4, 6]])
-            # iou3d = cal_iou_3d(box3d_gt_extended, box3d_bl_extended)
-
-            # recall_BEV += (torch.max(iou2d, dim = 1).values >= 0.7).sum().item()
-            # recall_3D += (torch.max(iou3d, dim = 1).values >= 0.7).sum().item()
-        
-        # recall_BEV = recall_BEV/gt_boxes_count
-        # recall_3D = recall_3D/gt_boxes_count
-        
-        # result_str = f"""
-        # Car BEV@0.7\t{recall_BEV}
-        # Car 3D@0.7\t{recall_3D}
-        # """
-        
-        return "", {}
-        
-        return result_str, {"recall_BEV":recall_BEV, "recall_3D":recall_3D}
 
 def kitti_carla_recall_evaluation(self:kitti_carla_dataset, det_annos, class_names, **kwargs):
         recall_BEV = 0
@@ -153,29 +69,6 @@ def kitti_carla_recall_evaluation(self:kitti_carla_dataset, det_annos, class_nam
         mAP_3d_R40 = get_mAP_R40(ret["precision"]).reshape(-1)
         
 
-            # pred_labels = torch.from_numpy(det_anno["pred_labels"]).to(gt_boxes.device)
-            # score = torch.from_numpy(det_anno["score"]).to(gt_boxes.device)
-            # boxes_lidar = torch.from_numpy(det_anno["boxes_lidar"]).to(gt_boxes.device)
-            # boxes_lidar = boxes_lidar[pred_labels == 1]
-            
-            # M = gt_boxes.size(0)
-            # N = boxes_lidar.size(0)
-            # gt_boxes_count += M
-            
-            # if M == 0 or N == 0:
-            #     continue
-
-            # box3d_gt_extended = gt_boxes.view(M, 1, 7).expand(-1, N, -1)
-            # box3d_bl_extended = boxes_lidar.view(1, N, 7).expand(M, -1, -1)
-            # # iou3d [M, N]
-            # iou2d, _, _, _ = cal_iou(box3d_gt_extended[..., [0, 1, 3, 4, 6]], box3d_bl_extended[..., [0, 1, 3, 4, 6]])
-            # iou3d = cal_iou_3d(box3d_gt_extended, box3d_bl_extended)
-
-            # recall_BEV += (torch.max(iou2d, dim = 1).values >= 0.7).sum().item()
-            # recall_3D += (torch.max(iou3d, dim = 1).values >= 0.7).sum().item()
-        
-        # recall_BEV = recall_BEV/gt_boxes_count
-        # recall_3D = recall_3D/gt_boxes_count
         result_str = f"""Car AP@0.70, 0.70:
 bev  AP:{mAP_bev[0].item():.4f}
 3d   AP:{mAP_3d[0].item():.4f}
@@ -220,7 +113,7 @@ def eval_data(args, cfg, adv_enabled, model, dataset, logger, custom_evaluation:
             dataloader = dataset,
             epoch_id = 0,
             logger = logger,
-            dist_test = args.DIST_TEST,
+            dist_test = False,
             result_dir = Path(args.EVAL_OUTPUT_DIR),
             infer_time = True,
             custom_evaluation = custom_evaluation,
@@ -239,12 +132,11 @@ def parse_config():
     args.add_argument('--device', type=int, default=0, help='device')
     args.add_argument('--EVAL_OUTPUT_DIR', type=str, default="./eval_output/", help='evaluation output directory')
     
+    args.add_argument('--gtboxes-path', type=str, default=None, help='path of ground truth bounding boxes')
     args.add_argument('--patch-ckpt', type=str, default=None, help='checkpoint of adversarial patch')
+    args.add_argument('--rooftop-annotate-path', type=str, default=None, help='path of rooftop annotation')
     args.add_argument('--cfg-file', type=str, default="configs/attack_configs/relevant_bounding_box_pointpillar.yaml", help='configuration file')
     
-    args.add_argument('--BATCH_SIZE', type=int, default=1, help='batch size')
-    args.add_argument('--WORKERS', type=int, default=4, help='workers')
-    args.add_argument('--DIST_TEST', action='store_true', help='distributed test')
     args.add_argument('--optim', type=str, default="ifgsm", choices=["adam", "ifgsm"], help='optimization method')
     args.add_argument('--headbox-attack', action='store_true', help='enable headbox attack')
     args.add_argument('--roihead-attack', action='store_true', help='enable roihead attack')
@@ -261,6 +153,7 @@ def parse_config():
     args.add_argument('--exp-name', type=str, default=str(int(time.time())), help='name of saving folder')
     args.add_argument('--verbose-epoch', type=int, default=-1, help='verbose per epoch')
     args.add_argument('--visualize', action='store_true')
+    args.add_argument('--adversarial-inference', action='store_true', help='inferencing with adversarial patch')
     
     args.add_argument('--stage-1-loss-reduce-func', type=str, default="physical_loss")
     args.add_argument('--stage-2-loss-reduce-func', type=str, default="score_multiply_iou3d")
@@ -305,9 +198,9 @@ def load_dataset(args, dataset_cfg, class_names, logger):
         dataset, test_loader, sampler = build_dataloader(
                 dataset_cfg=dataset_cfg,
                 class_names=class_names,
-                batch_size=args.BATCH_SIZE,
-                dist=args.DIST_TEST,
-                workers=args.WORKERS,
+                batch_size=1,
+                dist=False,
+                workers=4,
                 logger=logger,
                 training=False
             )
@@ -318,6 +211,13 @@ def load_dataset(args, dataset_cfg, class_names, logger):
                                       training=False, 
                                       ext=".ply", 
                                     #   gtboxes_path = dataset_cfg.GTBOXES,
+                                      logger=logger)
+    elif dataset_cfg.DATASET == "OutdoorDemoDataset":
+        dataset = outdoor_demo_dataset(dataset_cfg, 
+                                      class_names=class_names, 
+                                      training=False, 
+                                      ext=".bin", 
+                                      gtboxes_path = args.gtboxes_path,
                                       logger=logger)
         
     return dataset
@@ -336,6 +236,7 @@ def build_model_pipeline(args, logger, lidar, dataset_cfg,
     
     adv_pipeline = adv_dataset(dataset,
                             attack_cfg,
+                            rooftop_annotate=args.rooftop_annotate_path,
                             surrogate_model=model,
                             lidar = lidar,
                             enable_car = True,
@@ -369,13 +270,11 @@ def main():
 
     ### Prepare the adversarial dataset, which contains get_gradients methods and so forth, and optimizer oriented patch 
     lidar = LiDAR_base(origin=torch.tensor([0.0, 0.0, 0.0]).cuda(),
-                   azi_range=[-90, 90],
-                   polar_range= [-2.18, 2.0],
-                   polar_num=10, azi_res=0.08)
-    if dataset_cfg.DATASET == "KittiDataset":
-        recall_evaluation = kitti_recall_evaluation
+                    azi_range=[-90, 90],
+                    polar_range= [-2.18, 2.0],
+                    polar_num=10, azi_res=0.08)
         
-    elif dataset_cfg.DATASET == "KittiCarlaDataset":
+    if dataset_cfg.DATASET == "KittiCarlaDataset" or dataset_cfg.DATASET == "OutdoorDemoDataset":
         recall_evaluation = kitti_carla_recall_evaluation
     
     dataset, model, adv_pipeline = build_model_pipeline(args, logger, lidar, dataset_cfg,
@@ -390,7 +289,8 @@ def main():
         surrogate_dataset, surrogate_model, surrogate_adv_pipeline = build_model_pipeline(args, logger, lidar, surrogate_dataset_cfg,
                           surrogate_model_cfg,
                           surrogate_attack_cfg)
-    elif attack_method == "evaluate" or attack_method == "inference":
+        
+    elif attack_method == "evaluate" or attack_method == "inference" or attack_method == "visualization":
         if attack_cfg.ADVERSARIAL_PATCH is not None:
             adv_pipeline.load_adversarial_parameter(attack_cfg.ADVERSARIAL_PATCH)
         elif args.patch_ckpt is not None:
@@ -458,7 +358,17 @@ def main():
             json.dump(eval_ret_dict, json_file, indent=4)
         return
     elif attack_method == "inference":
-        adv_pipeline.prepare_predicted_gtboxes(path = os.path.join(args.SAVE_PATH, "gtboxes.pt"))
+        if args.adversarial_inference:
+            adv_pipeline.prepare_predicted_gtboxes(gt_boxes_path = os.path.join(args.SAVE_PATH, "adversarial_boxes.pt"),
+                                        predicted_score_path = os.path.join(args.SAVE_PATH, "adversarial_pre_scores.pt"),
+                                        adversarial_enabled = True)
+        else:
+            adv_pipeline.prepare_predicted_gtboxes(gt_boxes_path = os.path.join(args.SAVE_PATH, "gtboxes.pt"),
+                                                    predicted_score_path = os.path.join(args.SAVE_PATH, "pre_scores.pt"),)
+        return
+    elif attack_method == "visualization":
+        outdoor_demo_visualization(args, 
+                                   adv_pipeline,)
         return
     else:
         raise NotImplementedError

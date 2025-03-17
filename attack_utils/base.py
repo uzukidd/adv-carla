@@ -8,6 +8,7 @@ from pytorch3d.structures import Meshes, join_meshes_as_batch
 from pytorch3d.utils import ico_sphere
 from pytorch3d.transforms import euler_angles_to_matrix
 
+from typing import Optional
 from abc import ABC, abstractmethod
 
 class learnable_cube:
@@ -43,7 +44,7 @@ class learnable_sphere:
         self.basic_mesh = self.generate_basic_mesh(level=level, 
                                                    scale=scale, 
                                                    eps=eps)
-        
+        self.training = True
         self.deform_vert_logit: torch.Tensor = torch.zeros_like(self.basic_mesh.verts_packed(), requires_grad=True).cuda().contiguous()
         self.deform_vert_logit.requires_grad_(True)
         
@@ -59,10 +60,13 @@ class learnable_sphere:
     def get_basic_meshes(self) -> Meshes:
         return self.basic_mesh
     
-    def get_deformed_meshes(self, deform_vert_logit:torch.Tensor = None) -> Meshes:
+    def get_deformed_meshes(self, deform_vert_logit:Optional[torch.Tensor] = None) -> Meshes:
         basic_mesh = self.get_basic_meshes()
         if deform_vert_logit is None:
             deform_vert_logit = self.deform_vert_logit
+            
+        if not self.training:
+            deform_vert_logit = deform_vert_logit.detach()
             
         deformed_vert = self.scale[None, :] \
                 * self.init_vert_quadrant \
@@ -70,12 +74,12 @@ class learnable_sphere:
 
         return basic_mesh.update_padded(deformed_vert.unsqueeze(0))
     
-    def get_transformed_meshes(self, translate:torch.Tensor, deform_vert_logit:torch.Tensor = None):
-        deformed_meshes = self.get_deformed_meshes(deform_vert_logit = deform_vert_logit)
-        verts = deformed_meshes.verts_padded()
-        verts = verts + translate[None, :]
+    # def get_transformed_meshes(self, translate:torch.Tensor, deform_vert_logit:torch.Tensor = None):
+    #     deformed_meshes = self.get_deformed_meshes(deform_vert_logit = deform_vert_logit)
+    #     verts = deformed_meshes.verts_padded()
+    #     verts = verts + translate[None, :]
         
-        return deformed_meshes.update_padded(verts)
+    #     return deformed_meshes.update_padded(verts)
     
     def get_base_coord(self):
         base_z = self.basic_mesh.verts_packed()[:, 2].min()
@@ -115,6 +119,7 @@ class adversarial_patch_3d(ABC):
     
     def __init__(self, scale:list=[0.7, 0.7, 0.5],
                     eps = 0.0):
+        self.training = False
         self.scale = np.array(scale, dtype=np.float32)
         
         self.offset_limit: torch.Tensor = torch.tensor([0.1]).cuda()
@@ -125,6 +130,9 @@ class adversarial_patch_3d(ABC):
         
         self.theta: torch.Tensor = torch.tensor([0.0]).cuda()
         self.theta.requires_grad_(True)
+        
+    def set_training(self, enable:bool):
+        self.training = enable
         
     def get_parameters(self) -> list[torch.Tensor]:
         parameters = [self.global_translation, self.theta]
@@ -171,7 +179,11 @@ class single_sphere(adversarial_patch_3d):
         self.sphere = learnable_sphere(scale = self.scale, 
                                        level = level,
                                        eps = eps)
-            
+    
+    def set_training(self, enable:bool):
+        super().set_training(enable)
+        self.sphere.training = enable
+    
     def get_regularization_loss(self):
         deformed_mesh = self.get_deformed_meshes()
         return mesh_laplacian_smoothing(deformed_mesh)
@@ -196,7 +208,7 @@ class single_sphere(adversarial_patch_3d):
     def get_transformed_meshes(self, 
                                 pos:torch.Tensor,
                                 theta:torch.Tensor,
-                                adversarial_parameters:torch.Tensor = None,) -> Meshes:
+                                adversarial_parameters:Optional[torch.Tensor] = None,) -> Meshes:
         """
         Args:
             pos: [3,]
@@ -206,12 +218,15 @@ class single_sphere(adversarial_patch_3d):
         deform_vert_logit = None
         global_translation = self.global_translation
         global_theta = self.theta
+        
         if adversarial_parameters is not None:
-
             global_translation = adversarial_parameters[0]
             global_theta = adversarial_parameters[1]
             deform_vert_logit = adversarial_parameters[2]
             
+        if not self.training:
+            global_translation = global_translation.detach()
+            global_theta = global_theta.detach()
             
         deformed_mesh = self.get_deformed_meshes(deform_vert_logit = deform_vert_logit)
         verts = deformed_mesh.verts_padded()

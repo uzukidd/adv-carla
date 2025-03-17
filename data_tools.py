@@ -8,10 +8,12 @@ import pickle as pkl
 import pdb
 import glob
 
+
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
 from functools import partial
+from typing import Optional
 
 from raytorch.LiDAR import LiDAR_base
 
@@ -57,7 +59,6 @@ ply_dtypes = dict([
     (b'double', 'f8'),
     (b'float64', 'f8')
 ])
-
 
 # Numpy reader format
 valid_formats = {'ascii': '', 'binary_big_endian': '>', 'binary_little_endian': '<'}
@@ -200,8 +201,10 @@ class kitti_carla_dataset(DatasetTemplate):
 
     def prepare_predicted_gtboxes(self, 
                                   surrogate_model:nn.Module,
-                                  path:str = None):
+                                  gt_boxes_path:str = None,
+                                  pts_scene_path:str = None):
         self.gtboxes = []
+        points_scene = []
         target_amount = 0
         with tqdm(self, 
                   desc="Inferencing...", 
@@ -219,15 +222,20 @@ class kitti_carla_dataset(DatasetTemplate):
                 gtbox = torch.cat((preds_boxes, pred_labels), dim=1)
                 
                 self.gtboxes.append(gtbox)
+                points_scene.append(pred_dicts[0]["points"])
                 
                 target_amount += gtbox.size(0)
                 pbar.set_postfix({"Target detected": target_amount})
         
         self.logger.info(f"{target_amount} targets have been detected")
         
-        if path is not None:
-            self.logger.info(f"Saving target as: {path}")
-            torch.save(self.gtboxes, path)
+        if gt_boxes_path is not None:
+            self.logger.info(f"Saving target as: {gt_boxes_path}")
+            torch.save(self.gtboxes, gt_boxes_path)
+            
+        if pts_scene_path is not None:
+            self.logger.info(f"Saving pointt scenes as: {pts_scene_path}")
+            torch.save(points_scene, pts_scene_path)
             
     def evaluation(self, det_annos, class_names, **kwargs):
         assert self.gtboxes is not None
@@ -327,21 +335,6 @@ class kitti_carla_dataset(DatasetTemplate):
         
         return annotations
 
-        # {'alpha': array([-0.2]),
-        # 'bbox': array([[712.4 , 143.  , 810.73, 307.92]], dtype=float32),
-        # 'difficulty': array([0], dtype=int32),
-        # 'dimensions': array([[1.2 , 1.89, 0.48]]),
-        # 'gt_boxes_lidar': array([[ 8.73138142, -1.85591757, -0.65469939,  1.2       ,  0.48      ,
-        #         1.89      , -1.58079633]]),
-        # 'index': array([0], dtype=int32),
-        # 'location': array([[1.84, 1.47, 8.41]], dtype=float32),
-        # 'name': array(['Pedestrian'], dtype='<U10'),
-        # 'num_points_in_gt': array([377], dtype=int32),
-        # 'occluded': array([0.]),
-        # 'rotation_y': array([0.01]),
-        # 'score': array([-1.]),
-        # 'truncated': array([0.])}
-
     def __len__(self):
         return len(self.frames)
 
@@ -374,7 +367,127 @@ class kitti_carla_dataset(DatasetTemplate):
 
         return data_dict
     
+class outdoor_demo_dataset(DatasetTemplate):
+    HEIGHT_OFFSET = [0.0, 0.0, -0.4, 0.0]
+    def __init__(self, dataset_cfg, 
+                 class_names, 
+                 training=True, 
+                 map_name="", 
+                 gtboxes_path=None,
+                 logger=None, 
+                 ext='.bin'):
+        """
+        Args:
+            root_path:
+            dataset_cfg:
+            class_names:
+            training:
+            logger:
+        """
+        super().__init__(
+            dataset_cfg=dataset_cfg, 
+            class_names=class_names, 
+            training=training, 
+            logger=logger,
+        )
+        self.ext = ext
+        self.frames_path = Path(dataset_cfg.DATA_PATH) / Path("point_cloud_outdoor")
+        self.class_names = class_names
+        self.frames = sorted(glob.glob(str(self.frames_path) + f"/*{self.ext}"))
+        self.gtboxes = None
+        
+        if gtboxes_path is not None:
+            self.gtboxes = torch.load(gtboxes_path)
+        elif dataset_cfg.GTBOXES is not None:
+            self.gtboxes = torch.load(dataset_cfg.GTBOXES)
+        
+        if self.logger is not None:
+            self.logger.info('Total samples for OUTDOOR-DEMO dataset: %d' % (len(self)))
 
+    def __getitem__(self, index):
+        clean_data = self.__getitem_aux__(index)
+        return clean_data
+    
+    def __len__(self):
+        return self.frames.__len__()
+
+    
+    def __getitem_aux__(self, index):
+        if self.ext == '.bin':
+            raw_data = np.fromfile(self.frames[index], dtype=np.float32)
+            points = deepcopy(raw_data).reshape(-1, 4)
+            points += np.array(self.HEIGHT_OFFSET)
+        else:
+            raise NotImplementedError
+
+        input_dict = {
+            'points': points[:, :4],
+            'frame_id': index,
+        }
+
+        data_dict = self.prepare_data(data_dict=input_dict)
+        if self.gtboxes is not None:
+            data_dict["gt_boxes"] = self.gtboxes[index].to(torch.device('cuda'))
+            
+        return data_dict
+    
+    def prepare_kitti_det_annos(self, batch_index, box_dict):
+            
+        def get_template_prediction(num_samples):
+            ret_dict = {
+                'name': np.zeros(num_samples), 'truncated': np.zeros(num_samples),
+                'occluded': np.zeros(num_samples), 'alpha': np.zeros(num_samples),
+                'bbox': np.tile(np.array([0., 0., 0., 50.]), (num_samples, 1)), 'dimensions': np.zeros([num_samples, 3]),
+                'location': np.zeros([num_samples, 3]), 'rotation_y': np.zeros(num_samples),
+                'score': np.zeros(num_samples), 'boxes_lidar': np.zeros([num_samples, 7])
+            }
+            return ret_dict
+        
+        pred_scores = box_dict['score']
+        pred_boxes = box_dict['boxes_lidar']
+        pred_labels = box_dict['pred_labels']
+        pred_dict = get_template_prediction(pred_scores.shape[0])
+        if pred_scores.shape[0] == 0:
+            return pred_dict
+
+        # calib = batch_dict['calib'][batch_index]
+        # image_shape = batch_dict['image_shape'][batch_index].cpu().numpy()
+        # pred_boxes_camera = box_utils.boxes3d_lidar_to_kitti_camera(pred_boxes, calib)
+        # pred_boxes_img = box_utils.boxes3d_kitti_camera_to_imageboxes(
+        #     pred_boxes_camera, calib, image_shape=image_shape
+        # )
+        loc_camera = np.pad(pred_boxes[:, 0:3], ((0, 0), (0, 1)), constant_values=1)
+        pred_dict['name'] = np.array(self.class_names)[pred_labels - 1]
+        pred_dict['alpha'] = -np.arctan2(-pred_boxes[:, 1], pred_boxes[:, 0]) + 0.
+        pred_dict['dimensions'] = pred_boxes[:, 3:6]
+        pred_dict['location'] = loc_camera[:, 0:3]
+        pred_dict['rotation_y'] = pred_boxes[:, 6]
+        pred_dict['score'] = pred_scores
+        pred_dict['boxes_lidar'] = pred_boxes
+        
+        return pred_dict
+    
+    def prepare_kitti_gt_annos(self, batch_index, gt_boxes, gt_labels):
+        loc_camera = np.pad(gt_boxes[:, 0:3].cpu().numpy(), ((0, 0), (0, 1)), constant_values=1)
+        
+        annotations = {}
+        annotations['name'] = np.array(self.class_names)[gt_labels.cpu().numpy().reshape(-1).astype(int) - 1]
+        annotations['truncated'] = np.ones(gt_boxes.size(0)) * 0.
+        annotations['occluded'] = np.ones(gt_boxes.size(0)) * 0.
+        annotations['alpha'] = np.ones(gt_boxes.size(0)) * 0.
+        annotations['bbox'] = np.tile(np.array([0., 0., 0., 50.]), (gt_boxes.size(0), 1))
+        annotations['dimensions'] = gt_boxes[:, 3:6].cpu().numpy()
+        annotations['location'] = loc_camera[:, 0:3]
+        annotations['rotation_y'] = gt_boxes[:, 6].cpu().numpy()
+        annotations['score'] = np.ones(gt_boxes.size(0)) * 0.
+        annotations['difficulty'] = np.ones(gt_boxes.size(0)) * 1.
+
+        annotations['index'] = np.array(batch_index, dtype=np.int32)
+        annotations['gt_boxes_lidar'] = gt_boxes.cpu().numpy()
+        
+        return annotations
+
+        
     
 class adv_dataset(DatasetTemplate):
     
@@ -383,13 +496,14 @@ class adv_dataset(DatasetTemplate):
     
     def __init__(self, parent_dataset, 
                  attack_config,
+                 rooftop_annotate:Optional[str] = None,
                  surrogate_model = None, 
                  enable_car:bool = True,
                  enable_ped:bool = False,
                  enable_bicycle:bool = False,
                  enable_double:bool = False,
-                 lidar:LiDAR_base = None,
-                 car_adv_patch_scale:list[float] = None,
+                 lidar:Optional[LiDAR_base] = None,
+                 car_adv_patch_scale:Optional[list[float]] = None,
                  car_adv_patch_level:int = 2,
                  sample_amount = [50, 25],
                  target_class = 1,):
@@ -423,7 +537,11 @@ class adv_dataset(DatasetTemplate):
         
         self.target_class = target_class # 0 for background
         self.surrogate_model = surrogate_model
-        self.rooftop_approximate = self.load_annotated_rooftop(self.attack_config.ROOFTOP_ANNOTATE)
+        
+        if rooftop_annotate is not None:
+            self.rooftop_approximate = self.load_annotated_rooftop(rooftop_annotate)
+        else:
+            self.rooftop_approximate = self.load_annotated_rooftop(self.attack_config.ROOFTOP_ANNOTATE)
         
         self.car_adv_patch_scale = car_adv_patch_scale
         if car_adv_patch_scale is None:
@@ -444,9 +562,6 @@ class adv_dataset(DatasetTemplate):
         
         self.universal_adv_patch_car = single_sphere(scale=self.car_adv_patch_scale,
                                                      level=self.car_adv_patch_level)
-        # self.universal_adv_patch_car = simple_cubic_lattice(cubic_level = 1,
-        #                                                     scale=self.CAR_ADV_PATCH_SCALE)
-        self.universal_adv_patch_ped = single_sphere(scale=self.PED_ADV_PATCH_SCALE)
         
         self.point_cloud_range = np.array(self.dataset_cfg.POINT_CLOUD_RANGE, dtype=np.float32)
         self.data_processor = Data_preprocessor(
@@ -474,17 +589,27 @@ class adv_dataset(DatasetTemplate):
         
         return rooftop_approximate
     
+    def set_adv_patches_training(self, enable:bool):
+        self.universal_adv_patch_car.set_training(enable)
+        # self.universal_adv_patch_ped.set_training(enable)
+        
     def load_gtboxes(self,
                      path):
         self.gtboxes = torch.load(path)
     
     def prepare_predicted_gtboxes(self, 
-                                  path:str = None):
+                                  gt_boxes_path:str = None,
+                                  predicted_score_path:str = None,
+                                  pts_scenes_path:str = None,
+                                  adversarial_enabled:bool = False):
         self.gtboxes = []
+        self.predicted_score = []
+        pts_scenes = []
         target_amount = 0
         assert self.surrogate_model is not None
         
-        self.enable_adversarial_patch(False)
+        self.set_adv_patches_training(False)
+        self.enable_adversarial_patch(adversarial_enabled)
         with tqdm(self, 
                   desc="Inferencing...", 
                   postfix={"Target detected": 0},) as pbar:
@@ -496,12 +621,15 @@ class adv_dataset(DatasetTemplate):
                 preds_scores:torch.Tensor = pred_dicts[0]["pred_scores"] # [N, ]
                 preds_boxes:torch.Tensor = pred_dicts[0]["pred_boxes"] # [N, 7]
                 pred_labels:torch.Tensor = pred_dicts[0]["pred_labels"].view(-1) # [N, ]
-            
+
+
                 label_mask = (pred_labels == 1)
                 pred_labels = pred_labels[label_mask].detach().view(-1, 1)
                 preds_boxes = preds_boxes[label_mask].detach()
+                preds_scores = preds_scores[label_mask].detach()
                 
-                if batch_dict.get('points_with_semantic') is not None:
+                
+                if batch_dict.get('points_with_semantic') is not None and batch_dict.get('points_with_semantic')[0].shape[1] == 5:
                     points_with_semantic = batch_dict['points_with_semantic'][0]
                     points_assign = points_in_boxes_gpu(points_with_semantic[:, :3].unsqueeze(0), preds_boxes.unsqueeze(0))
                     points_assign = points_assign.squeeze(0)
@@ -517,32 +645,44 @@ class adv_dataset(DatasetTemplate):
                         confidence_pred_boxes = (points_pred_box == 10).sum()/total_points_pred_box
                         pred_boxes_mask[i] = (confidence_pred_boxes.item() > 0.7)
                     
-                pred_labels = pred_labels[pred_boxes_mask].detach()
-                preds_boxes = preds_boxes[pred_boxes_mask].detach()
+                    pred_labels = pred_labels[pred_boxes_mask].detach()
+                    preds_boxes = preds_boxes[pred_boxes_mask].detach()
+                    preds_scores = preds_scores[pred_boxes_mask].detach()
+                    
                 gtbox = torch.cat((preds_boxes, pred_labels), dim=1)
                 
+                self.predicted_score.append(preds_scores)
                 self.gtboxes.append(gtbox)
+                pts_scenes.append(batch_dict["points"])
                 
                 target_amount += gtbox.size(0)
                 pbar.set_postfix({"Target detected": target_amount})
         
         self.logger.info(f"{target_amount} targets have been detected")
         
-        if path is not None:
-            self.logger.info(f"Saving target as: {path}")
-            torch.save(self.gtboxes, path)
+        if predicted_score_path is not None:
+            self.logger.info(f"Saving score as: {predicted_score_path}")
+            torch.save(self.predicted_score, predicted_score_path)
+        
+        if gt_boxes_path is not None:
+            self.logger.info(f"Saving target as: {gt_boxes_path}")
+            torch.save(self.gtboxes, gt_boxes_path)
+            
+        if pts_scenes_path is not None:
+            self.logger.info(f"Saving pointts scenes as: {pts_scenes_path}")
+            torch.save(pts_scenes, pts_scenes_path)
             
 
     
     def load_adversarial_parameter(self, path:str):
         input_dict = torch.load(path)
         self.universal_adv_patch_car.load_parameter(input_dict["universal_adv_patch_car"])
-        self.universal_adv_patch_ped.load_parameter(input_dict["universal_adv_patch_ped"])
+        # self.universal_adv_patch_ped.load_parameter(input_dict["universal_adv_patch_ped"])
         
     def save_adversarial_parameter(self, path:str):
         output_dict = {
             "universal_adv_patch_car" : self.universal_adv_patch_car.get_parameters(),
-            "universal_adv_patch_ped" : self.universal_adv_patch_ped.get_parameters(),
+            # "universal_adv_patch_ped" : self.universal_adv_patch_ped.get_parameters(),
         }
         
         torch.save(output_dict, path)
@@ -611,14 +751,14 @@ class adv_dataset(DatasetTemplate):
                                                             adversarial_parameters)
 
             
-        if gt_boxes_ped is not None and self.enable_ped:
-            pos_trans, theta, _ = torch.split(gt_boxes_ped, [6, 1, 1], dim=1)
+        # if gt_boxes_ped is not None and self.enable_ped:
+        #     pos_trans, theta, _ = torch.split(gt_boxes_ped, [6, 1, 1], dim=1)
             
-            batch_dict["points"] = self.attach_adv_patch_scene_ped_aux(batch_dict["points"], 
-                                                            self.universal_adv_patch_ped,
-                                                            pos_trans,
-                                                            theta, 
-                                                            self.sample_amount[1])
+        #     batch_dict["points"] = self.attach_adv_patch_scene_ped_aux(batch_dict["points"], 
+        #                                                     self.universal_adv_patch_ped,
+        #                                                     pos_trans,
+        #                                                     theta, 
+        #                                                     self.sample_amount[1])
 
         return batch_dict
     
@@ -817,73 +957,8 @@ class adv_dataset(DatasetTemplate):
                     ret[key] = batch_gt_boxes3d
                 elif key in ['frame_id']:
                     ret[key] = val
-
-                # elif key in ['roi_boxes']:
-                #     max_gt = max([x.shape[1] for x in val])
-                #     batch_gt_boxes3d = np.zeros((batch_size, val[0].shape[0], max_gt, val[0].shape[-1]), dtype=np.float32)
-                #     for k in range(batch_size):
-                #         batch_gt_boxes3d[k,:, :val[k].shape[1], :] = val[k]
-                #     ret[key] = batch_gt_boxes3d
-
-                # elif key in ['roi_scores', 'roi_labels']:
-                #     max_gt = max([x.shape[1] for x in val])
-                #     batch_gt_boxes3d = np.zeros((batch_size, val[0].shape[0], max_gt), dtype=np.float32)
-                #     for k in range(batch_size):
-                #         batch_gt_boxes3d[k,:, :val[k].shape[1]] = val[k]
-                #     ret[key] = batch_gt_boxes3d
-
-                # elif key in ['gt_boxes2d']:
-                #     max_boxes = 0
-                #     max_boxes = max([len(x) for x in val])
-                #     batch_boxes2d = np.zeros((batch_size, max_boxes, val[0].shape[-1]), dtype=np.float32)
-                #     for k in range(batch_size):
-                #         if val[k].size > 0:
-                #             batch_boxes2d[k, :val[k].__len__(), :] = val[k]
-                #     ret[key] = batch_boxes2d
-                # elif key in ["images", "depth_maps"]:
-                #     # Get largest image size (H, W)
-                #     max_h = 0
-                #     max_w = 0
-                #     for image in val:
-                #         max_h = max(max_h, image.shape[0])
-                #         max_w = max(max_w, image.shape[1])
-
-                #     # Change size of images
-                #     images = []
-                #     for image in val:
-                #         pad_h = common_utils.get_pad_params(desired_size=max_h, cur_size=image.shape[0])
-                #         pad_w = common_utils.get_pad_params(desired_size=max_w, cur_size=image.shape[1])
-                #         pad_width = (pad_h, pad_w)
-                #         pad_value = 0
-
-                #         if key == "images":
-                #             pad_width = (pad_h, pad_w, (0, 0))
-                #         elif key == "depth_maps":
-                #             pad_width = (pad_h, pad_w)
-
-                #         image_pad = np.pad(image,
-                #                            pad_width=pad_width,
-                #                            mode='constant',
-                #                            constant_values=pad_value)
-
-                #         images.append(image_pad)
-                #     ret[key] = np.stack(images, axis=0)
                 elif key in ['calib']:
                     ret[key] = val
-                # elif key in ["points_2d"]:
-                #     max_len = max([len(_val) for _val in val])
-                #     pad_value = 0
-                #     points = []
-                #     for _points in val:
-                #         pad_width = ((0, max_len-len(_points)), (0,0))
-                #         points_pad = np.pad(_points,
-                #                 pad_width=pad_width,
-                #                 mode='constant',
-                #                 constant_values=pad_value)
-                #         points.append(points_pad)
-                #     ret[key] = np.stack(points, axis=0)
-                # elif key in ['camera_imgs']:
-                #     ret[key] = torch.stack([torch.stack(imgs,dim=0) for imgs in val],dim=0)
                 else:
                     ret[key] = val
             except:
@@ -893,115 +968,42 @@ class adv_dataset(DatasetTemplate):
         ret['batch_size'] = batch_size * batch_size_ratio
         return ret
     
-class dataset_adapter(DatasetTemplate):
-    def __init__(self, parent_dataset,
-                 dataset_cfg,
-                 class_names,
-                 training,
-                 root_path,
-                 logger):
-        super().__init__(
-                dataset_cfg=dataset_cfg, 
-                class_names=class_names, 
-                training=training, 
-                root_path=root_path, 
-                logger=logger
-            )
-        self.parent_dataset = parent_dataset
-        self.data_processor = Data_preprocessor(
-            self.dataset_cfg.ADVANCED_DATA_PROCESSOR, point_cloud_range=self.point_cloud_range,
-            training=self.training, num_point_features=4
-        )
-        
-    def __getitem__(self, 
-                    batch_dict,
-                    index, 
-                    adv_dataset:"bipartite_adv_dataset" = None,
-                    adversarial_parameters:list[torch.Tensor] = None):
-        batch_dict = self.parent_dataset.__getitem__(index)
-        batch_dict["idx"] = index
-        load_data_to_gpu(batch_dict)
-        
-        if adv_dataset is not None:
-            batch_dict = adv_dataset.process_adversarial_data(batch_dict, 
-                                                              index, 
-                                                              adversarial_parameters)
-            
-        batch_dict = self.data_processor.forward(
-            data_dict=batch_dict
-        )
-        load_data_to_gpu(batch_dict)
-        batch_dict = adv_dataset.gpu_collate_batch([batch_dict])
-        
-        return batch_dict
 
-class bipartite_adv_dataset(adv_dataset):
-    def __init__(self, surrogate_dataset:dataset_adapter,
-                 *args, **kwargs):
-        """
-        Args:
-            parent_dataset:
-        """
-        super().__init__(
-            *args, **kwargs
-        )
-        self.surrogate_dataset = surrogate_dataset
-        
-    def process_adversarial_data(self, batch_dict, index, adversarial_parameters):
-        rooftop_approximate = None
-        if self.rooftop_approximate is not None:
-            rooftop_approximate = self.rooftop_approximate[index]
-            
-        
-        batch_dict = self.prepare_car_gtbox(batch_dict,
-            rooftop_approximate)
-        batch_dict = self.prepare_pedestrain_gtbox(batch_dict)
-        batch_dict = self.prepare_bicycle_gtbox(batch_dict)
-        
-        
-        batch_dict=self.prepare_adversarial_data(batch_dict,
-                                                adversarial_parameters)
-        
-        return batch_dict
-        
-    def __getitem__(self, index,
-                    surrogate = False, 
-                    adversarial_parameters:list[torch.Tensor] = None):
-        
-        batch_dict = self.parent_dataset.__getitem__(index)
-        batch_dict["idx"] = index
-        load_data_to_gpu(batch_dict)
-        
-        batch_dict = self.process_adversarial_data(batch_dict, index, adversarial_parameters)
-        if surrogate:
-            batch_dict = self.surrogate_dataset.__getitem__(
-                index = index,
-                data_dict=batch_dict
-            )
-        else:
-             batch_dict = self.data_processor.forward(
-                data_dict=batch_dict
-            )
-            
-        load_data_to_gpu(batch_dict)
-         
-        batch_dict = self.gpu_collate_batch([batch_dict])
-        
-        
-        return batch_dict
     
 if __name__ == "__main__":
-    CFG_FILE = "configs/attack_configs/kitticarla/inference_pointrcnn.yaml"
-    DATA_PATH = "/home/ksas/Public/datasets/KITTI-CARLA/dataset/Town01"
+    # CFG_FILE = "configs/attack_configs/kitticarla/inference_pointrcnn.yaml"
+    # DATA_PATH = "/home/ksas/Public/datasets/KITTI-CARLA/dataset/Town01"
+    # cfg_from_yaml_file(CFG_FILE, cfg)
+    # logger = common_utils.create_logger()
+    # logger.info('-----------------Quick Demo of Kitti-carla-------------------------')
+    # dataset = kitti_carla_dataset(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, training=False, ext=".ply", logger=logger)
+    
+    # sample = dataset[0]
+    # points = sample["points"]
+    # points = points[points[:, 4] == 10]
+    # print(points)
+    
+    CFG_FILE = "configs/dataset_configs/outdoor_demo_dataset.yaml"
     cfg_from_yaml_file(CFG_FILE, cfg)
     logger = common_utils.create_logger()
     logger.info('-----------------Quick Demo of Kitti-carla-------------------------')
-    dataset = kitti_carla_dataset(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, training=False, ext=".ply", logger=logger)
+    dataset = outdoor_demo_dataset(dataset_cfg=cfg, 
+                                   class_names= ['Car', 'Pedestrian', 'Cyclist'], 
+                                   training=False, 
+                                   ext=".bin", 
+                                   logger=logger)
     
     sample = dataset[0]
-    points = sample["points"]
-    points = points[points[:, 4] == 10]
+    points = sample['points']
     print(points)
+    print(points.shape)
+
+    # pdb.set_trace()
+    
+    # V.draw_scenes(
+    #     points=points, ref_boxes=None,
+    #     ref_scores=None, ref_labels=None, gt_boxes=None
+    # )
     
     # BATCH_SIZE = 1
     # WORKERS = 4
