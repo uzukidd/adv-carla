@@ -677,12 +677,10 @@ class adv_dataset(DatasetTemplate):
     def load_adversarial_parameter(self, path:str):
         input_dict = torch.load(path)
         self.universal_adv_patch_car.load_parameter(input_dict["universal_adv_patch_car"])
-        # self.universal_adv_patch_ped.load_parameter(input_dict["universal_adv_patch_ped"])
         
     def save_adversarial_parameter(self, path:str):
         output_dict = {
             "universal_adv_patch_car" : self.universal_adv_patch_car.get_parameters(),
-            # "universal_adv_patch_ped" : self.universal_adv_patch_ped.get_parameters(),
         }
         
         torch.save(output_dict, path)
