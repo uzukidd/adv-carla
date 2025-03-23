@@ -1,0 +1,17 @@
+fit:
+  data:
+    class_names: ['Car', 'Pedestrian', 'Cyclist']
+    batch_size: 1
+    dist_train: false
+    workers: 1
+    merge_all_iters_to_one_epoch: false
+    total_epochs: 1
+
+test:
+  data:
+    class_names: ['Car', 'Pedestrian', 'Cyclist']
+    batch_size: 1
+    dist_train: false
+    workers: 1
+    merge_all_iters_to_one_epoch: false
+    total_epochs: 1

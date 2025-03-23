@@ -1,16 +1,16 @@
 DATASET: 'KittiDataset'
-DATA_PATH: '/home/ksas/Public/datasets/KITTI'
+DATA_PATH: '/home/ksas/uzuki_space/OpenPCDet-Win11-Compatible/data/kitti'
 
 POINT_CLOUD_RANGE: [0, -40, -3, 70.4, 40, 1]
 
 DATA_SPLIT: {
     'train': train,
-    'test': train
+    'test': val
 }
 
 INFO_PATH: {
-    'train': [/home/ksas/Public/datasets/KITTI/kitti_infos_trainval.pkl],
-    'test': [/home/ksas/Public/datasets/KITTI/kitti_infos_trainval.pkl],
+    'train': [kitti_infos_train.pkl],
+    'test': [kitti_infos_val.pkl],
 }
 
 GET_ITEM_LIST: ["points"]
@@ -59,4 +59,12 @@ DATA_PROCESSOR:
       SHUFFLE_ENABLED: {
         'train': True,
         'test': False
+      }
+
+    - NAME: transform_points_to_voxels
+      VOXEL_SIZE: [0.05, 0.05, 0.1]
+      MAX_POINTS_PER_VOXEL: 5
+      MAX_NUMBER_OF_VOXELS: {
+        'train': 16000,
+        'test': 40000
       }
