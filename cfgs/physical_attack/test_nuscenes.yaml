@@ -1,0 +1,28 @@
+data:
+  pcdet_dataset_config: 
+    _BASE_CONFIG_: cfgs/pcdet/dataset_configs/nuscenes_dataset.yaml
+    DATA_PATH: '/mnt/sda/datasets/nuscenes/'
+
+    POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+    DATA_PROCESSOR:
+        -   NAME: mask_points_and_boxes_outside_range
+            REMOVE_OUTSIDE_BOXES: True
+
+        -   NAME: shuffle_points
+            SHUFFLE_ENABLED: {
+                'train': True,
+                'test': True
+            }
+
+        -   NAME: transform_points_to_voxels
+            VOXEL_SIZE: [0.2, 0.2, 8.0]
+            MAX_POINTS_PER_VOXEL: 20
+            MAX_NUMBER_OF_VOXELS: {
+                'train': 30000,
+                'test': 30000
+            }
+
+model:
+  pcdet_model_config: 
+    _BASE_CONFIG_: cfgs/pcdet/nuscenes_models/cbgs_pp_multihead.yaml
+    ckpt_path: /mnt/sda/modelzoo/pcdet/nuscenes/pp_multihead_nds5823_updated.pth

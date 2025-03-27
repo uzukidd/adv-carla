@@ -1,8 +1,7 @@
-trainer:
-  devices: 1
 data:
   pcdet_dataset_config: 
     _BASE_CONFIG_: cfgs/pcdet/dataset_configs/kitti_dataset.yaml
+    DATA_PATH: '/home/ksas/uzuki_space/OpenPCDet-Win11-Compatible/data/kitti'
 
     DATA_SPLIT: {
         'train': trainval,
@@ -25,13 +24,36 @@ data:
             'test': False
           }
 
-        - NAME: transform_points_to_voxels
+        # - NAME: transform_points_to_voxels
+        #   VOXEL_SIZE: [0.16, 0.16, 4]
+        #   MAX_POINTS_PER_VOXEL: 32
+        #   MAX_NUMBER_OF_VOXELS: {
+        #     'train': 16000,
+        #     'test': 40000
+        #   }
+
+        - NAME: collate_gtboxes
+          target_label: [1]
+          min_points: null
+        
+        - NAME: physical_adversary
+
+        - NAME: differentiable_voxelize
+          RETAIN_GRAPH: False
+          END_TO_END_MODE: True
+          DETERMINISTIC: True
           VOXEL_SIZE: [0.16, 0.16, 4]
           MAX_POINTS_PER_VOXEL: 32
           MAX_NUMBER_OF_VOXELS: {
-            'train': 16000,
+            'train': 40000,
             'test': 40000
-          }
+                  }
+        
+        # - NAME: collate_gtboxes
+        #   target_label: [1]
+        #   min_points: null
+        
+        # - NAME: physical_adversary
     
     DATA_AUGMENTOR:
         DISABLE_AUG_LIST: ['placeholder']
@@ -60,6 +82,8 @@ data:
             - NAME: random_world_scaling
               WORLD_SCALE_RANGE: [0.95, 1.05]
 model:
+  car_adv_patch_scale: [0.7, 0.7, 0.5]
+  car_adv_patch_level: 2
   pcdet_model_config: 
     _BASE_CONFIG_: cfgs/pcdet/kitti_models/pointpillar.yaml
     ckpt_path: /mnt/sda/modelzoo/pcdet/kitti/pointpillar_7728.pth

@@ -1,0 +1,126 @@
+import numpy as np
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import pytorch3d
+from pytorch3d.ops import sample_points_from_meshes
+from pytorch3d.structures import Meshes, join_meshes_as_batch, join_meshes_as_scene
+
+from functools import partial
+from easydict import EasyDict
+
+from voxel_ops import pcdet_registry
+from raytorch.LiDAR import LiDAR_base
+from pcdet.datasets.processor.data_processor import DataProcessor
+from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
+
+from .base import adversarial_patch_3d
+
+from typing import Union
+
+class physical_adversary:
+    def __init__(self,):
+        self.adversarial_patch = None
+        self.rooftop_approximate = None
+        self.lidar = None
+
+    def configure_adversary(self, adversarial_patch:adversarial_patch_3d, lidar:LiDAR_base=None):
+        self.adversarial_patch = adversarial_patch
+        self.lidar = lidar
+
+    def check_tensor(self, input:Union[np.ndarray, torch.Tensor]):
+        if isinstance(input, np.ndarray):
+            input = (
+                torch.from_numpy(input)
+                .to(self.adversarial_patch.device)
+            )
+        
+        return input
+        
+    def collate_gtboxes(self, data_processor , data_dict:dict=None, config:EasyDict=None):
+        if data_dict is None:
+            return partial(self.collate_gtboxes, data_processor=data_processor, config=config)
+        
+        if not isinstance(config.target_label, torch.Tensor):
+            config.target_label = torch.tensor(config.target_label).to(self.adversarial_patch.device)
+        
+        data_dict["points"] = self.check_tensor(data_dict["points"])
+        data_dict["gt_boxes"] = self.check_tensor(data_dict["gt_boxes"])
+
+        # Filter ground truth boxes by label
+        mask = torch.isin(data_dict["gt_boxes"][:, 7], config.target_label)
+        data_dict["gt_boxes"] = data_dict["gt_boxes"][mask]
+
+        # Filter ground truth boxes by min points
+        if config.min_points is not None:
+            point_masks = roiaware_pool3d_utils.points_in_boxes_gpu(
+                    data_dict["points"][None, :, 0:3], data_dict["gt_boxes"][None, :, :7]
+                )
+            point_masks.squeeze(0)
+
+            new_gt_boxes = []
+            for n_mask in range(point_masks.size(0)):
+                num = point_masks[n_mask].sum()
+                if num > config.min_points:
+                    new_gt_boxes.append(data_dict["gt_boxes"][n_mask])
+            if new_gt_boxes.__len__() > 0:
+                data_dict["gt_boxes"] = torch.stack(new_gt_boxes)
+            print(new_gt_boxes.__len__() )
+
+        return data_dict
+        
+    # def filter_gtboxes(self, data_processor , data_dict:dict=None, config:EasyDict=None):
+    #     if data_dict is None:
+    #         return partial(self.filter_gtboxes, data_processor=data_processor, config=config)
+        
+    #     return data_dict
+
+    def physical_adversary(self, data_processor , data_dict:dict=None, config:EasyDict=None):
+        if data_dict is None:
+            return partial(self.physical_adversary, data_processor=data_processor, config=config)
+        
+        data_dict["gt_boxes"] = self.check_tensor(data_dict["gt_boxes"])
+        data_dict["points"] = self.check_tensor(data_dict["points"])
+
+        pos, lwh, theta, label = torch.split(data_dict["gt_boxes"].clone(), (3, 3, 1, 1), dim=1)
+        pos[:, 2] += lwh[:, 2]/2.0
+        data_dict["points"] = self.attach_adv_patch_scene_car_aux(data_dict["points"], 
+                                                            self.adversarial_patch,
+                                                            pos,
+                                                            theta,)
+
+        return data_dict
+        
+    def attach_adv_patch_scene_car_aux(self, points:torch.Tensor, adv_patch:adversarial_patch_3d, 
+                                pos:torch.Tensor, # [N, 3]
+                               theta:torch.Tensor, # [N, 1]
+                               sample_amount = 50, # when lidar is None
+                               adversarial_parameters = None,):
+        pts_set = [points]
+        meshes_batch = []
+        n = pos.size(0)
+        for i in range(n):
+            extend_pts = None
+
+            transformed_mesh = adv_patch.get_transformed_meshes(pos[i:i+1],
+                                                                theta[i],
+                                                                adversarial_parameters)
+            meshes_batch.append(transformed_mesh)
+                
+                
+        if meshes_batch.__len__() != 0:
+            meshes_batch = join_meshes_as_batch(meshes_batch)
+            
+            if self.lidar is not None:
+                extend_pts = self.lidar.scan_triangles(meshes_batch)
+            else:
+                extend_pts = sample_points_from_meshes(meshes_batch, sample_amount * n)
+            
+                        # extend_pts = F.pad(extend_pts,  (0, 1), "constant", 1.0)
+            random_reflectness = torch.rand(extend_pts.shape[0], 1).to(extend_pts.device)  # (N, 1)
+            extend_pts = torch.cat([extend_pts, random_reflectness], dim=1)
+
+            pts_set.append(extend_pts)
+                
+        return torch.concatenate(pts_set)

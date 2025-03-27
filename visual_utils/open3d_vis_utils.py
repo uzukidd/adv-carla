@@ -4,7 +4,7 @@ Written by Jihan YANG
 All rights preserved from 2021 - present.
 """
 import open3d
-from open3d.web_visualizer import draw
+# from open3d.web_visualizer import draw
 
 import torch
 import matplotlib
@@ -73,7 +73,6 @@ def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_labels=None, ref_scor
         gt_boxes = gt_boxes.detach().cpu().numpy()
     if isinstance(ref_boxes, torch.Tensor):
         ref_boxes = ref_boxes.detach().cpu().numpy()
-
     vis = open3d.visualization.Visualizer()
     vis.create_window()
 

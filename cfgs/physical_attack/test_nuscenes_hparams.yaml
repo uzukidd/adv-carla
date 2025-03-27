@@ -1,0 +1,23 @@
+fit:
+  trainer:
+    devices: 2
+  data:
+    class_names: ['car','truck', 'construction_vehicle', 'bus', 'trailer',
+              'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
+    batch_size: 8
+    dist_train: false
+    workers: 4
+    merge_all_iters_to_one_epoch: false
+    total_epochs: 1
+
+test:
+  trainer:
+    devices: 1
+  data:
+    class_names: ['car','truck', 'construction_vehicle', 'bus', 'trailer',
+              'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
+    batch_size: 16
+    dist_train: false
+    workers: 31
+    merge_all_iters_to_one_epoch: false
+    total_epochs: 1

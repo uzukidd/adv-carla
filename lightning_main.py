@@ -1,23 +1,33 @@
 from lightning.pytorch.cli import LightningCLI
-from lightning.pytorch.demos.boring_classes import DemoModel, BoringDataModule
-
 
 import os
+import logging
+
 from easydict import EasyDict
 
 import yaml
+import torch.distributed as dist
+
+import torch
 from torch import optim, nn, utils, Tensor
 from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
+
 import lightning as L
 
-from pcdet.datasets import build_dataloader
+from pcdet.utils import common_utils
 from pcdet.datasets.dataset import DatasetTemplate
 from pcdet.models import build_network, model_fn_decorator, load_data_to_gpu
 from pcdet.models.detectors import Detector3DTemplate
-from dummy import MNISTData
 
+from raytorch.LiDAR import LiDAR_base
+
+from attack_utils import physical_adversary, single_sphere
+from data_utils import voxel_collate_batch, resgister_data_processor
+# from visual_utils import open3d_vis_utils, visualize_utils
+
+from functools import partial
 from typing import List
 
 class print_logger:
@@ -98,16 +108,16 @@ class pcdet_dataset(L.LightningDataModule):
     def train_dataloader(self) -> DataLoader:
         return DataLoader(self.dataset, 
                           batch_size=self.batch_size, 
-                          collate_fn=self.dataset.collate_batch,)
+                          collate_fn=voxel_collate_batch,)
         
     def test_dataloader(self) -> DataLoader:
         return DataLoader(self.dataset, 
                           batch_size=self.batch_size, 
-                          collate_fn=self.dataset.collate_batch,)
+                          collate_fn=voxel_collate_batch,)
     def val_dataloader(self) -> DataLoader:
         return DataLoader(self.dataset, 
                           batch_size=self.batch_size, 
-                          collate_fn=self.dataset.collate_batch,)
+                          collate_fn=voxel_collate_batch,)
 
 class pcdet_model(L.LightningModule):
     def __init__(self, pcdet_model_config:EasyDict, 
@@ -122,9 +132,15 @@ class pcdet_model(L.LightningModule):
         
     def forward(self, *args, **kwargs):
         return self.model.forward(*args, **kwargs)
+    
+class adversarial_patch(L.LightningModule):
+    def __init__(self, car_adv_patch_scale, car_adv_patch_level):
+        super().__init__()
+        self.universal_adv_patch_car = single_sphere(semi_scale=torch.Tensor(car_adv_patch_scale).to(self.device),
+                                                     level=car_adv_patch_level)
 
 class physical_attack(L.LightningModule):
-    def __init__(self, pcdet_model_config):
+    def __init__(self, pcdet_model_config, car_adv_patch_scale, car_adv_patch_level):
         """
             Dataset (OpenPCDet) -> Lightning
             Adversarial Dataset -> Lightning
@@ -133,21 +149,74 @@ class physical_attack(L.LightningModule):
             Adversarial Loss -> Lightning
         """
         super().__init__()
+
         self.pcdet_model_config = convert_to_easydict(pcdet_model_config)
         self.pcdet_model = None
+        self.print_logger = None
         self.datamodule:pcdet_dataset = None
+        self.adversarial_patch = None
+        self.car_adv_patch_scale = car_adv_patch_scale
+        self.car_adv_patch_level = car_adv_patch_level
         
-    def prepare_data(self):
-        self.datamodule = self.trainer.datamodule
+        self.adversary = physical_adversary()
+        
+        resgister_data_processor("physical_adversary",  self.adversary.physical_adversary)
+        resgister_data_processor("collate_gtboxes",  self.adversary.collate_gtboxes)
+
+    def print(self, *args, **kwargs):
+        self.print_logger.info(*args, **kwargs)
+
+    def visualize_frame(self, point_clouds:torch.Tensor, gt_boxes:torch.Tensor):
+        if self.local_rank == 0:
+            os.makedirs(os.path.join(self.trainer.log_dir, "tmp"), exist_ok=True)
+            points_path = os.path.join(self.trainer.log_dir, "tmp", "points.pt")
+            gt_boxes_path = os.path.join(self.trainer.log_dir, "tmp", "gt_boxes.pt")
+            torch.save(point_clouds, points_path)
+            torch.save(gt_boxes, gt_boxes_path)
+            command = ["python", "visual_utils/vis_terminal.py", "-p", points_path, "-g", gt_boxes_path]
+            import subprocess
+            subprocess.run(
+                command,
+                check=True,
+                text=True,
+                capture_output=False
+            )
+            os.remove(points_path)
+            os.remove(gt_boxes_path)
         
     def configure_model(self):
-        
+        # Initialize logger
+        self.print_logger = common_utils.create_logger(os.path.join(self.trainer.log_dir, "runtime_log.log"), 
+                                                       self.local_rank)
+
+        self.datamodule = self.trainer.datamodule
         self.pcdet_model = pcdet_model(self.pcdet_model_config, 
                                        self.datamodule.class_names.__len__(),
                                        self.datamodule.dataset)
         self.pcdet_model.freeze()
+        
+        self.adversarial_patch = single_sphere(self.car_adv_patch_scale, self.car_adv_patch_level, device=self.device)
+        self.adversary.configure_adversary(self.adversarial_patch, 
+                                            LiDAR_base(origin=torch.tensor([0.0, 0.0, 0.0]).to(self.device),
+                                            azi_range=[-90, 90],
+                                            polar_range= [-2.18, 2.0],
+                                            polar_num=10, azi_res=0.08))
+
         # self.pcdet_model.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=True)
         # self.pcdet_model = self.pcdet_model(self.model_config, )
+
+        
+    """
+    -----------------
+    Training
+    -----------------
+    """
+
+    def on_train_epoch_start(self):
+        pass
+    
+    def on_train_epoch_end(self):
+        pass
     
     def training_step(self, batch_dict, batch_idx):
         # training_step defines the train loop.
@@ -156,18 +225,30 @@ class physical_attack(L.LightningModule):
         # 'lidar_aug_matrix', 'use_lead_xyz', 'voxels', 'voxel_coords', 'voxel_num_points', 
         # 'image_shape', 'batch_size', 'pillar_features', 'spatial_features', 'spatial_features_2d', 
         # 'batch_cls_preds', 'batch_box_preds', 'cls_preds_normalized'])
-        
         load_data_to_gpu(batch_dict)
-        ret_dict, tb_dict = self.pcdet_model(batch_dict)
+        # self.visualize_frame(batch_dict['points'].cpu(), batch_dict['gt_boxes'].cpu())
+        pred_dicts, ret_dict = self.pcdet_model(batch_dict)
+
+        # return batch_dict['points'].mean()
+
         # list[dict_keys(['pred_boxes', 'pred_scores', 'pred_labels'])]
         # dict_keys(['gt', 'roi_0.3', 'rcnn_0.3', 'roi_0.5', 'rcnn_0.5', 'roi_0.7', 'rcnn_0.7'])
-        import pdb; pdb.set_trace()
+
+    def configure_gradient_clipping(self):
+        pass
+    
+    """
+    -----------------
+    Testing
+    -----------------
+    """
         
     def on_test_epoch_start(self):
         self.det_annos = []
     
     def test_step(self, batch_dict, batch_idx):
         load_data_to_gpu(batch_dict)
+        import pdb;pdb.set_trace()
         pred_dicts, ret_dict = self.pcdet_model(batch_dict)
         annos = self.datamodule.dataset.generate_prediction_dicts(
             batch_dict, pred_dicts, self.datamodule.class_names,
@@ -176,14 +257,19 @@ class physical_attack(L.LightningModule):
         self.det_annos += annos
         
     def on_test_epoch_end(self):
-        result_str, result_dict = self.datamodule.dataset.evaluation(
-            self.det_annos, self.datamodule.class_names,
-            eval_metric=self.pcdet_model_config.POST_PROCESSING.EVAL_METRIC,
-            output_path=None
-        )
+        self.det_annos = common_utils.merge_results_dist(self.det_annos, 
+                                                    len(self.datamodule.dataset), 
+                                                    tmpdir=os.path.join(self.trainer.log_dir, 'tmpdir'))
+        if self.local_rank == 0:
+            result_str, result_dict = self.datamodule.dataset.evaluation(
+                self.det_annos, self.datamodule.class_names,
+                eval_metric=self.pcdet_model_config.POST_PROCESSING.EVAL_METRIC,
+                output_path=self.trainer.log_dir
+            )
+            self.print(result_str)
+        dist.barrier()
         
-        print(result_str)
-    
+        
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=1e-3)
         return optimizer

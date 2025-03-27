@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import numpy as np
 
 import pytorch3d
@@ -18,7 +19,7 @@ from pytorch3d.transforms import (
 from abc import ABC, abstractmethod
 
 
-class adversarial_patch_3d(ABC):
+class adversarial_patch_3d(nn.Module, ABC):
     """
     3D adversarial patch
         pipeline:
@@ -29,13 +30,15 @@ class adversarial_patch_3d(ABC):
             _T, _theta
     """
 
-    def __init__(self):
+    def __init__(self, device:torch.device):
+        super().__init__()
+        self.device = device
         # global transforming parameters
-        self._b: torch.Tensor = torch.tensor([0.1]).cuda()
-        self._T: torch.Tensor = torch.tensor([0.0, 0.0, 0.0]).cuda()
+        self._b: torch.Tensor = torch.tensor([[0.1]]).to(device)
+        self._T: torch.Tensor = torch.tensor([[0.0, 0.0, 0.0]]).to(device)
         self._T.requires_grad_(True)
 
-        self._theta: torch.Tensor = torch.tensor([0.0]).cuda()
+        self._theta: torch.Tensor = torch.tensor([0.0]).to(device)
         self._theta.requires_grad_(True)
 
     def encode_parameters(self, T, theta):

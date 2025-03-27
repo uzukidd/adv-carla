@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import pytorch3d
 from pytorch3d.ops import sample_points_from_meshes, laplacian
 from pytorch3d.loss import mesh_laplacian_smoothing
@@ -118,22 +119,22 @@ class learnable_sphere_legacy:
         return mSphere
 
 
-class learnable_sphere:
-    def __init__(self, semi_scale: torch.Tensor, level: int = 2, eps: float = 0.01):
+class learnable_sphere(nn.Module):
+    def __init__(self, semi_scale: torch.Tensor, level: int = 2, eps: float = 0.01, device:torch.device=None):
+        super().__init__()
         self.semi_scale: torch.Tensor = semi_scale.detach().clone()
 
         self.basic_mesh = self.generate_basic_mesh(
-            level=level, semi_scale=semi_scale, eps=eps
+            level=level, semi_scale=semi_scale, eps=eps, device=device
         )
 
         # Vertex deforming parameter
         self.init_vert_quadrant: torch.Tensor = (
             torch.sign(self.basic_mesh.verts_packed()).detach().clone()
         )
-        self.deform_vert_logit: torch.Tensor = (
-            torch.zeros_like(self.basic_mesh.verts_packed()).cuda().contiguous()
-        )
-        self.deform_vert_logit.requires_grad_(True)
+        self.deform_vert_logit: torch.Tensor = nn.Parameter(
+            torch.zeros_like(self.basic_mesh.verts_packed()).to(device).contiguous()
+        , True)
 
         self.init_vert_logit: torch.Tensor = (
             torch.logit(torch.abs(self.basic_mesh.verts_packed() / self.semi_scale[None, :]))
@@ -167,8 +168,8 @@ class learnable_sphere:
         return basic_mesh.update_padded(deformed_vert.unsqueeze(0))
 
     @staticmethod
-    def generate_basic_mesh(level: int, semi_scale: list, eps):
-        mSphere = ico_sphere(level).cuda()
+    def generate_basic_mesh(level: int, semi_scale: list, eps, device:torch.device = None):
+        mSphere = ico_sphere(level).to(device)
 
         new_vert = mSphere.verts_padded()
         new_vert[:, :] = new_vert[:, :] * semi_scale * (1 - eps)

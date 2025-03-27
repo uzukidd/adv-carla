@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 
 from pytorch3d.ops import sample_points_from_meshes, laplacian
@@ -16,15 +17,24 @@ from pytorch3d.transforms import (
 from .base import adversarial_patch_3d
 from .primitive import learnable_sphere, learnable_sphere_legacy
 
-from typing import Optional
+from typing import Optional, Union
 
 
 class single_sphere(adversarial_patch_3d):
-    def __init__(self, semi_scale: list = [0.7, 0.7, 0.5], level: int = 2, eps=0.01):
-        super().__init__()
+    def __init__(self, semi_scale: Union[list, np.ndarray, torch.Tensor] = [0.7, 0.7, 0.5], level: int = 2, eps=0.01, device:torch.device=None):
+        super().__init__(device)
+        if isinstance(semi_scale, list): 
+            semi_scale = torch.tensor(semi_scale, device=device)
+        elif isinstance(semi_scale, np.ndarray):
+            semi_scale = torch.from_numpy(semi_scale).to(device)
+            
         self.sphere: learnable_sphere = learnable_sphere(
-            semi_scale=semi_scale, level=level, eps=eps
+            semi_scale=semi_scale, level=level, eps=eps, device=device
         )
+        self.base_coord = torch.tensor([[0.0, 0.0, -self.sphere.basic_mesh.verts_packed()[:, 2].amin()]]
+                                       , device=device)
+        self.base_tranlate = Translate(self.base_coord)
+        
 
     def get_regularization_loss(self):
         deformed_mesh = self.get_deformed_meshes()
@@ -56,8 +66,8 @@ class single_sphere(adversarial_patch_3d):
     ) -> Meshes:
         """
         Args:
-            pos: [3,]
-            theta: [1,]
+            pos: [B, 3]
+            theta: [B,]
         """
 
         # deform_vert_logit = None
@@ -75,19 +85,18 @@ class single_sphere(adversarial_patch_3d):
 
         # global transformation
         T, R = self.encode_parameters(self._T, self._theta)
+        verts = self.base_tranlate.transform_points(verts)
         verts = R.transform_points(verts)
         verts = T.transform_points(verts)
 
         # translate to the rooftop of the vehicle
         if pos is not None and theta is not None:
-            local_R = RotateAxisAngle(theta, "Z", degrees=False)
+            local_R = RotateAxisAngle(theta, "Z", degrees=False).to(verts.device)
+            local_T = Translate(pos).to(verts.device)
             verts = local_R.transform_points(verts)
-            verts = verts + (pos - self.base_coord)
-
-            transformed_mesh = deformed_mesh.update_padded(verts)
-        else:
-            transformed_mesh = deformed_mesh.update_padded(verts)
-
+            verts = local_T.transform_points(verts)
+            
+        transformed_mesh = deformed_mesh.update_padded(verts)
         return transformed_mesh
 
     def constrain_grad(self):

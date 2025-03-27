@@ -1,17 +1,21 @@
 fit:
+  trainer:
+    devices: 1
   data:
     class_names: ['Car', 'Pedestrian', 'Cyclist']
-    batch_size: 1
+    batch_size: 8
     dist_train: false
-    workers: 1
+    workers: 4
     merge_all_iters_to_one_epoch: false
     total_epochs: 1
 
 test:
+  trainer:
+    devices: 1
   data:
     class_names: ['Car', 'Pedestrian', 'Cyclist']
-    batch_size: 1
+    batch_size: 8
     dist_train: false
-    workers: 1
+    workers: 4
     merge_all_iters_to_one_epoch: false
     total_epochs: 1
