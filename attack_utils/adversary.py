@@ -24,6 +24,10 @@ class physical_adversary:
         self.adversarial_patch = None
         self.rooftop_approximate = None
         self.lidar = None
+        self.enbaled_adversary = True
+
+    def enable_adversary(self, adversary:bool=True):
+        self.enbaled_adversary = adversary
 
     def configure_adversary(self, adversarial_patch:adversarial_patch_3d, lidar:LiDAR_base=None):
         self.adversarial_patch = adversarial_patch
@@ -45,28 +49,30 @@ class physical_adversary:
         if not isinstance(config.target_label, torch.Tensor):
             config.target_label = torch.tensor(config.target_label).to(self.adversarial_patch.device)
         
-        data_dict["points"] = self.check_tensor(data_dict["points"])
-        data_dict["gt_boxes"] = self.check_tensor(data_dict["gt_boxes"])
+        if self.enbaled_adversary:
+        
+            data_dict["points"] = self.check_tensor(data_dict["points"])
+            data_dict["gt_boxes"] = self.check_tensor(data_dict["gt_boxes"])
 
-        # Filter ground truth boxes by label
-        mask = torch.isin(data_dict["gt_boxes"][:, 7], config.target_label)
-        data_dict["gt_boxes"] = data_dict["gt_boxes"][mask]
+            # Filter ground truth boxes by label
+            mask = torch.isin(data_dict["gt_boxes"][:, 7], config.target_label)
+            data_dict["gt_boxes"] = data_dict["gt_boxes"][mask]
 
-        # Filter ground truth boxes by min points
-        if config.min_points is not None:
-            point_masks = roiaware_pool3d_utils.points_in_boxes_gpu(
-                    data_dict["points"][None, :, 0:3], data_dict["gt_boxes"][None, :, :7]
-                )
-            point_masks.squeeze(0)
+            # Filter ground truth boxes by min points
+            if config.min_points is not None:
+                point_masks = roiaware_pool3d_utils.points_in_boxes_gpu(
+                        data_dict["points"][None, :, 0:3], data_dict["gt_boxes"][None, :, :7]
+                    )
+                point_masks.squeeze(0)
 
-            new_gt_boxes = []
-            for n_mask in range(point_masks.size(0)):
-                num = point_masks[n_mask].sum()
-                if num > config.min_points:
-                    new_gt_boxes.append(data_dict["gt_boxes"][n_mask])
-            if new_gt_boxes.__len__() > 0:
-                data_dict["gt_boxes"] = torch.stack(new_gt_boxes)
-            print(new_gt_boxes.__len__() )
+                new_gt_boxes = []
+                for n_mask in range(point_masks.size(0)):
+                    num = point_masks[n_mask].sum()
+                    if num > config.min_points:
+                        new_gt_boxes.append(data_dict["gt_boxes"][n_mask])
+                if new_gt_boxes.__len__() > 0:
+                    data_dict["gt_boxes"] = torch.stack(new_gt_boxes)
+                print(new_gt_boxes.__len__() )
 
         return data_dict
         
@@ -80,15 +86,17 @@ class physical_adversary:
         if data_dict is None:
             return partial(self.physical_adversary, data_processor=data_processor, config=config)
         
-        data_dict["gt_boxes"] = self.check_tensor(data_dict["gt_boxes"])
-        data_dict["points"] = self.check_tensor(data_dict["points"])
+        if self.enbaled_adversary:
+        
+            data_dict["gt_boxes"] = self.check_tensor(data_dict["gt_boxes"])
+            data_dict["points"] = self.check_tensor(data_dict["points"])
 
-        pos, lwh, theta, label = torch.split(data_dict["gt_boxes"].clone(), (3, 3, 1, 1), dim=1)
-        pos[:, 2] += lwh[:, 2]/2.0
-        data_dict["points"] = self.attach_adv_patch_scene_car_aux(data_dict["points"], 
-                                                            self.adversarial_patch,
-                                                            pos,
-                                                            theta,)
+            pos, lwh, theta, label = torch.split(data_dict["gt_boxes"].clone(), (3, 3, 1, 1), dim=1)
+            pos[:, 2] += lwh[:, 2]/2.0
+            data_dict["points"] = self.attach_adv_patch_scene_car_aux(data_dict["points"], 
+                                                                self.adversarial_patch,
+                                                                pos,
+                                                                theta,)
 
         return data_dict
         

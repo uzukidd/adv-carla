@@ -100,7 +100,7 @@ class single_sphere(adversarial_patch_3d):
         return transformed_mesh
 
     def constrain_grad(self):
-        super().constrain_grad()
+        super().constrain_grad(allow_rotate=False)
         if self.sphere.deform_vert_logit.grad is not None:
             self.sphere.deform_vert_logit.grad[:, 2] = 0.0
 

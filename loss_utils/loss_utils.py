@@ -8,9 +8,46 @@ from typing import Callable, Optional
 
 import pdb
 
-from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d
-from cudaext.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
+from pcdet.ops.iou3d_nms import iou3d_nms_utils
+# from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d
+# from cudaext.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
 
+class relevant_bounding_box_loss(nn.Module):
+
+    def __init__(self, target:int):
+        super().__init__()
+        self.target = target
+        self.iou_threshold = 0.1
+        self.score_threshold = 0.1
+
+    def forward(self, data_dict:dict, gt_boxes:torch.Tensor):
+        preds_scores:torch.Tensor = data_dict["pred_scores"]    # [N, ]
+        preds_boxes:torch.Tensor = data_dict["pred_boxes"]      # [N, 7]
+        pred_labels:torch.Tensor = data_dict["pred_labels"]     # [N, ]
+
+        preds_boxes = preds_boxes[pred_labels == self.target]
+        preds_scores = preds_scores[pred_labels == self.target]
+
+        gt_boxes, gt_labels = torch.split(gt_boxes, [7, 1], dim=1)  # [M, 7], [M, 1]
+        gt_boxes = gt_boxes[gt_labels[:, 0] == self.target]
+        gt_labels = gt_labels[gt_labels[:, 0] == self.target]
+
+        if gt_boxes.size(0) != 0 and preds_boxes.size(0) != 0:
+            iou3d_matrix:torch.Tensor = iou3d_nms_utils.boxes_iou3d_gpu(preds_boxes, gt_boxes).detach() # [M, N]
+            relevant_iou3d, relevant_idx = iou3d_matrix.max(dim = 1) # [M, ]
+            relevant_iou3d_mask = (relevant_iou3d >= self.iou_threshold)
+
+            masked_relevant_iou3d = relevant_iou3d[relevant_iou3d_mask]
+            masked_relevant_idx = relevant_idx[relevant_iou3d_mask]
+            masked_preds_scores = preds_scores[relevant_iou3d_mask]
+
+            adv_loss = (-masked_relevant_iou3d * torch.log(1.0 - masked_preds_scores)).sum()
+
+            return adv_loss
+
+        return torch.tensor(1e-6, device=preds_scores.device, requires_grad=True)
+
+        
 
 
 class mesh_objectwise_loss(nn.Module):
@@ -114,7 +151,7 @@ class mesh_objectwise_loss(nn.Module):
             return total_loss
 
 
-class relevant_bounding_box_loss(nn.Module):
+class relevant_bounding_box_loss_legacy(nn.Module):
     """
         loss from https://arxiv.org/abs/2004.00543
     """

@@ -35,11 +35,9 @@ class adversarial_patch_3d(nn.Module, ABC):
         self.device = device
         # global transforming parameters
         self._b: torch.Tensor = torch.tensor([[0.1]]).to(device)
-        self._T: torch.Tensor = torch.tensor([[0.0, 0.0, 0.0]]).to(device)
-        self._T.requires_grad_(True)
+        self._T: torch.Tensor = nn.Parameter(torch.tensor([[0.0, 0.0, 0.0]]).to(device), True)
 
-        self._theta: torch.Tensor = torch.tensor([0.0]).to(device)
-        self._theta.requires_grad_(True)
+        self._theta: torch.Tensor = nn.Parameter(torch.tensor([0.0]).to(device), True)
 
     def encode_parameters(self, T, theta):
         return Translate(self._b * torch.tanh(T)), RotateAxisAngle(
@@ -77,7 +75,7 @@ class adversarial_patch_3d(nn.Module, ABC):
 
     def constrain_grad(self, allow_rotate: bool = False):
         if self._T.grad is not None:
-            self._T.grad[2] = 0.0
+            self._T.grad[:, 2] = 0.0
 
         if not allow_rotate:
             self._theta.grad = None

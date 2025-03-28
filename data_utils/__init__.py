@@ -2,10 +2,13 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from easydict import EasyDict
 
 from pcdet.datasets.processor.data_processor import DataProcessor
 from pcdet.utils import common_utils
 from collections import defaultdict
+from functools import partial
+from typing import Union
 
 def voxel_collate_batch(batch_list, _unused=False):
     data_dict = defaultdict(list)
@@ -133,6 +136,30 @@ def voxel_collate_batch(batch_list, _unused=False):
 
     ret['batch_size'] = batch_size * batch_size_ratio
     return ret
+
+def constant_reflectness(self, data_processor, data_dict:dict=None, config:EasyDict=None):
+    if data_dict is None:
+        return partial(constant_reflectness, data_processor=data_processor, config=config)
+    
+    def _check_tensor(self, input:Union[np.ndarray, torch.Tensor]):
+        if isinstance(input, np.ndarray):
+            input = (
+                torch.from_numpy(input)
+                .to(self.adversarial_patch.device)
+            )
+        
+        return input
+
+    data_dict["points"]:torch.Tensor = _check_tensor(data_dict["points"])
+
+    cosntant_value:float = config["constant"]
+
+    reflectness = data_dict["points"].new_full(data_dict["points"].size(), cosntant_value)
+    mask = data_dict["points"].new_zeros(data_dict["points"].size())
+    mask[:, 3] = 1.0
+
+    data_dict["points"] = data_dict["points"] * (1 - mask) + reflectness * mask 
+
 
 def resgister_data_processor(name:str, module:callable):
     setattr(DataProcessor, name, classmethod(module))

@@ -23,6 +23,9 @@ data:
             }
 
 model:
+  benchmark_path: assets/benchmark/kitti/clean.json
+  car_adv_patch_scale: [0.7, 0.7, 0.5]
+  car_adv_patch_level: 2
   pcdet_model_config: 
     _BASE_CONFIG_: cfgs/pcdet/nuscenes_models/cbgs_pp_multihead.yaml
     ckpt_path: /mnt/sda/modelzoo/pcdet/nuscenes/pp_multihead_nds5823_updated.pth
