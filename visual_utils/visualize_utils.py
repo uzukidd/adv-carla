@@ -141,15 +141,15 @@ def draw_multi_grid_range(fig, grid_size=20, bv_range=(-60, -60, 60, 60)):
 
 def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_scores=None, ref_labels=None):
     if not isinstance(points, np.ndarray):
-        points = points.cpu().numpy()
+        points = points.detach().cpu().numpy()
     if ref_boxes is not None and not isinstance(ref_boxes, np.ndarray):
-        ref_boxes = ref_boxes.cpu().numpy()
+        ref_boxes = ref_boxes.detach().cpu().numpy()
     if gt_boxes is not None and not isinstance(gt_boxes, np.ndarray):
-        gt_boxes = gt_boxes.cpu().numpy()
+        gt_boxes = gt_boxes.detach().cpu().numpy()
     if ref_scores is not None and not isinstance(ref_scores, np.ndarray):
-        ref_scores = ref_scores.cpu().numpy()
+        ref_scores = ref_scores.detach().cpu().numpy()
     if ref_labels is not None and not isinstance(ref_labels, np.ndarray):
-        ref_labels = ref_labels.cpu().numpy()
+        ref_labels = ref_labels.detach().cpu().numpy()
 
     fig = visualize_pts(points)
     fig = draw_multi_grid_range(fig, bv_range=(0, -40, 80, 40))

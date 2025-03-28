@@ -1,0 +1,95 @@
+trainer:
+  num_sanity_val_steps: 0
+  max_epochs: 1
+  use_distributed_sampler: false
+
+data:
+  pcdet_dataset_config: 
+    _BASE_CONFIG_: cfgs/pcdet/dataset_configs/kitti_dataset.yaml
+    DATA_PATH: '/home/ksas/uzuki_space/OpenPCDet-Win11-Compatible/data/kitti'
+
+    DATA_SPLIT: {
+        'train': trainval,
+        'test': trainval
+    }
+
+    INFO_PATH: {
+        'train': [kitti_infos_trainval.pkl],
+        'test': [kitti_infos_trainval.pkl],
+    }
+
+    POINT_CLOUD_RANGE: [0, -39.68, -3, 69.12, 39.68, 1]
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+        # - NAME: transform_points_to_voxels
+        #   VOXEL_SIZE: [0.16, 0.16, 4]
+        #   MAX_POINTS_PER_VOXEL: 32
+        #   MAX_NUMBER_OF_VOXELS: {
+        #     'train': 16000,
+        #     'test': 40000
+        #   }
+
+        - NAME: collate_gtboxes
+          target_label: [1]
+          min_points: null
+        
+        - NAME: physical_adversary
+
+        - NAME: differentiable_voxelize
+          RETAIN_GRAPH: False
+          END_TO_END_MODE: True
+          DETERMINISTIC: True
+          VOXEL_SIZE: [0.16, 0.16, 4]
+          MAX_POINTS_PER_VOXEL: 32
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 40000,
+            'test': 40000
+                  }
+        
+        # - NAME: collate_gtboxes
+        #   target_label: [1]
+        #   min_points: null
+        
+        # - NAME: physical_adversary
+    
+    DATA_AUGMENTOR:
+        DISABLE_AUG_LIST: ['placeholder']
+        AUG_CONFIG_LIST:
+            - NAME: gt_sampling
+              USE_ROAD_PLANE: False
+              DB_INFO_PATH:
+                  - kitti_dbinfos_train.pkl
+              PREPARE: {
+                 filter_by_min_points: ['Car:5', 'Pedestrian:5', 'Cyclist:5'],
+                 filter_by_difficulty: [-1],
+              }
+
+              SAMPLE_GROUPS: ['Car:15','Pedestrian:15', 'Cyclist:15']
+              NUM_POINT_FEATURES: 4
+              DATABASE_WITH_FAKELIDAR: False
+              REMOVE_EXTRA_WIDTH: [0.0, 0.0, 0.0]
+              LIMIT_WHOLE_SCENE: False
+
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: ['x']
+
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [0.95, 1.05]
+model:
+  benchmark_path: assets/benchmark/kitti/clean.json
+  car_adv_patch_scale: [0.7, 0.7, 0.5]
+  car_adv_patch_level: 2
+  pcdet_model_config: 
+    _BASE_CONFIG_: cfgs/pcdet/kitti_models/pointpillar.yaml
+    ckpt_path: /mnt/sda/modelzoo/pcdet/kitti/pointpillar_7728.pth

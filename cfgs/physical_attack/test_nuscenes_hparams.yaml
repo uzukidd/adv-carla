@@ -1,0 +1,18 @@
+fit:
+  trainer:
+    devices: 2
+  data:
+    class_names: ['car','truck', 'construction_vehicle', 'bus', 'trailer',
+              'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
+    batch_size: 8
+    workers: 4
+
+
+test:
+  trainer:
+    devices: 4
+  data:
+    class_names: ['car','truck', 'construction_vehicle', 'bus', 'trailer',
+              'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
+    batch_size: 16
+    workers: 31
