@@ -29,7 +29,7 @@ from data_utils import voxel_collate_batch, resgister_data_processor
 from loss_utils import relevant_bounding_box_loss
 
 from functools import partial
-from typing import List
+from typing import List, Optional
 
 class print_logger:
     def info(self, *args, **kwargs):
@@ -141,7 +141,7 @@ class adversarial_patch(L.LightningModule):
                                                      level=car_adv_patch_level)
 
 class physical_attack(L.LightningModule):
-    def __init__(self, pcdet_model_config, benchmark_path, car_adv_patch_scale, car_adv_patch_level):
+    def __init__(self, pcdet_model_config, adversary_config:Optional[dict] = None):
         """
             Dataset (OpenPCDet) -> Lightning
             Adversarial Dataset -> Lightning
@@ -155,23 +155,43 @@ class physical_attack(L.LightningModule):
 
         self.pcdet_model_config = convert_to_easydict(pcdet_model_config)
         self.pcdet_model = None
+
+
         self.print_logger = None
         self.datamodule:pcdet_dataset = None
 
         self.benchmark = None
-        if benchmark_path is not None:
-            with open(benchmark_path) as file:
-                self.benchmark = json.load(file)
-
         self.adversarial_patch = None
-        self.car_adv_patch_scale = car_adv_patch_scale
-        self.car_adv_patch_level = car_adv_patch_level
-        
-        self.adversary = physical_adversary()
-        resgister_data_processor("physical_adversary",  self.adversary.physical_adversary)
-        resgister_data_processor("collate_gtboxes",  self.adversary.collate_gtboxes)
+        self.adversary = None
+
+        if adversary_config is not None:
+            self.adversary_config = convert_to_easydict(adversary_config)
+            self.adversary = physical_adversary(self.adversary_config)
+            resgister_data_processor("physical_adversary",  self.adversary.physical_adversary)
+            resgister_data_processor("collate_gtboxes",  self.adversary.collate_gtboxes)
 
         self.loss = relevant_bounding_box_loss(1)
+
+    def configure_model(self):
+        # Initialize logger
+        self.print_logger = common_utils.create_logger(os.path.join(self.trainer.log_dir, "runtime_log.log"), 
+                                                       self.local_rank)
+
+        self.datamodule = self.trainer.datamodule
+        self.pcdet_model = pcdet_model(self.pcdet_model_config, 
+                                       self.datamodule.class_names.__len__(),
+                                       self.datamodule.dataset)
+        self.pcdet_model.freeze()
+        
+        if self.adversary is not None:
+            self.adversarial_patch = single_sphere(self.adversary.car_adv_patch_scale, 
+                                                   self.adversary.car_adv_patch_level, 
+                                                   device=self.device)
+            self.adversary.configure_adversary(self.adversarial_patch, 
+                                                LiDAR_base(origin=torch.tensor([0.0, 0.0, 0.0]).to(self.device),
+                                                azi_range=[-90, 90],
+                                                polar_range= [-2.18, 2.0],
+                                                polar_num=10, azi_res=0.08))
 
     def print(self, *args, **kwargs):
         self.print_logger.info(*args, **kwargs)
@@ -207,27 +227,6 @@ class physical_attack(L.LightningModule):
                 del checkpoint['state_dict'][name]
 
         return super().on_save_checkpoint(checkpoint)
-        
-    def configure_model(self):
-        # Initialize logger
-        self.print_logger = common_utils.create_logger(os.path.join(self.trainer.log_dir, "runtime_log.log"), 
-                                                       self.local_rank)
-
-        self.datamodule = self.trainer.datamodule
-        self.pcdet_model = pcdet_model(self.pcdet_model_config, 
-                                       self.datamodule.class_names.__len__(),
-                                       self.datamodule.dataset)
-        self.pcdet_model.freeze()
-        
-        self.adversarial_patch = single_sphere(self.car_adv_patch_scale, self.car_adv_patch_level, device=self.device)
-        self.adversary.configure_adversary(self.adversarial_patch, 
-                                            LiDAR_base(origin=torch.tensor([0.0, 0.0, 0.0]).to(self.device),
-                                            azi_range=[-90, 90],
-                                            polar_range= [-2.18, 2.0],
-                                            polar_num=10, azi_res=0.08))
-
-        # self.pcdet_model.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=True)
-        # self.pcdet_model = self.pcdet_model(self.model_config, )
 
     def evaluate_pred_result(self):
         if self.det_annos is None or self.det_annos.__len__() == 0:
@@ -246,20 +245,16 @@ class physical_attack(L.LightningModule):
             with open(os.path.join(self.trainer.log_dir, f"epoch_{self.current_epoch}_result_dict.json"), "w", encoding="utf-8") as f:
                 json.dump(result_dict, f, ensure_ascii=False, indent=4) 
             self.print(result_str)
-            if self.benchmark is not None:
+
+            if self.adversary is not None and self.adversary.benchmark is not None:
                 from eval_utils import eval_utils
                 dataset_eval:eval_utils.dataset_evaluation = eval_utils.__all__[self.datamodule.pcdet_dataset_config.DATASET]
-                asr_str, asr_dict = dataset_eval.eval_asr(self.benchmark, result_dict)
+                asr_str, asr_dict = dataset_eval.eval_asr(self.adversary.benchmark, result_dict)
                 with open(os.path.join(self.trainer.log_dir, f"epoch_{self.current_epoch}_adversarial_dict.json"), "w", encoding="utf-8") as f:
-                    json.dump(asr_dict, f, ensure_ascii=False, indent=4) 
+                    json.dump(asr_dict, f, ensure_ascii=False, indent=4)
                 self.print(asr_str)
             # dict_keys(['Car_aos/easy_R40', 'Car_aos/moderate_R40', 'Car_aos/hard_R40', 'Car_3d/easy_R40', 'Car_3d/moderate_R40', 'Car_3d/hard_R40', 'Car_bev/easy_R40', 'Car_bev/moderate_R40', 'Car_bev/hard_R40', 'Car_image/easy_R40', 'Car_image/moderate_R40', 'Car_image/hard_R40', 'Pedestrian_aos/easy_R40', 'Pedestrian_aos/moderate_R40', 'Pedestrian_aos/hard_R40', 'Pedestrian_3d/easy_R40', 'Pedestrian_3d/moderate_R40', 'Pedestrian_3d/hard_R40', 'Pedestrian_bev/easy_R40', 'Pedestrian_bev/moderate_R40', 'Pedestrian_bev/hard_R40', 'Pedestrian_image/easy_R40', 'Pedestrian_image/moderate_R40', 'Pedestrian_image/hard_R40', 'Cyclist_aos/easy_R40', 'Cyclist_aos/moderate_R40', 'Cyclist_aos/hard_R40', 'Cyclist_3d/easy_R40', 'Cyclist_3d/moderate_R40', 'Cyclist_3d/hard_R40', 'Cyclist_bev/easy_R40', 'Cyclist_bev/moderate_R40', 'Cyclist_bev/hard_R40', 'Cyclist_image/easy_R40', 'Cyclist_image/moderate_R40', 'Cyclist_image/hard_R40'])
 
-        
-        # if self.trainer.world_size > 1:
-        #     dist.barrier()
-        # commu_utils.synchronize()
-    
     """
     -----------------
     Training
@@ -337,7 +332,6 @@ class physical_attack(L.LightningModule):
         
     def on_test_epoch_start(self):
         self.det_annos = []
-        self.adversary.enable_adversary(False)
     
     def test_step(self, batch_dict, batch_idx):
         pred_dicts, ret_dict = self.pcdet_model(batch_dict)

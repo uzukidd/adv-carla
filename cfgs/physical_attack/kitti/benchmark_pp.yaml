@@ -1,0 +1,52 @@
+trainer:
+  num_sanity_val_steps: 0
+  max_epochs: 1
+  use_distributed_sampler: false
+
+data:
+  pcdet_dataset_config: 
+    _BASE_CONFIG_: cfgs/pcdet/dataset_configs/kitti_dataset.yaml
+    DATA_PATH: data/kitti
+
+    MIN_POINTS_IN_ALL_ANNO: 10 
+
+    DATA_SPLIT: {
+        'train': null,
+        'test': trainval
+    }
+
+    INFO_PATH: {
+        'train': [null],
+        'test': [kitti_infos_trainval.pkl],
+    }
+
+    POINT_CLOUD_RANGE: [0, -39.68, -3, 69.12, 39.68, 1]
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+        - NAME: constant_reflectness
+          constant: 0.0
+
+        - NAME: differentiable_voxelize
+          RETAIN_GRAPH: False
+          END_TO_END_MODE: False
+          DETERMINISTIC: True
+          VOXEL_SIZE: [0.16, 0.16, 4]
+          MAX_POINTS_PER_VOXEL: 32
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 40000,
+            'test': 40000
+                  }
+
+model:
+  adversary_config: null
+  pcdet_model_config: 
+    _BASE_CONFIG_: cfgs/pcdet/kitti_models/pointpillar.yaml
+    ckpt_path: /mnt/sda/modelzoo/pcdet/kitti/pointpillar_7728.pth

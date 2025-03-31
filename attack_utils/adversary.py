@@ -7,6 +7,7 @@ import pytorch3d
 from pytorch3d.ops import sample_points_from_meshes
 from pytorch3d.structures import Meshes, join_meshes_as_batch, join_meshes_as_scene
 
+import json
 from functools import partial
 from easydict import EasyDict
 
@@ -20,7 +21,16 @@ from .base import adversarial_patch_3d
 from typing import Union
 
 class physical_adversary:
-    def __init__(self,):
+    def __init__(self, adversary_config:dict):
+        self.config = adversary_config
+        self.car_adv_patch_scale = self.config.car_adv_patch_scale
+        self.car_adv_patch_level = self.config.car_adv_patch_level
+
+        self.benchmark = None
+        if self.config.benchmark_path is not None:
+            with open(self.config.benchmark_path) as file:
+                self.benchmark = json.load(file)
+
         self.adversarial_patch = None
         self.rooftop_approximate = None
         self.lidar = None
@@ -42,7 +52,7 @@ class physical_adversary:
         
         return input
         
-    def collate_gtboxes(self, data_processor , data_dict:dict=None, config:EasyDict=None):
+    def collate_gtboxes(self, data_processor:DataProcessor, data_dict:dict=None, config:EasyDict=None):
         if data_dict is None:
             return partial(self.collate_gtboxes, data_processor=data_processor, config=config)
         
@@ -58,31 +68,25 @@ class physical_adversary:
             mask = torch.isin(data_dict["gt_boxes"][:, 7], config.target_label)
             data_dict["gt_boxes"] = data_dict["gt_boxes"][mask]
 
+            # We already filtered the ground truth boxes in dataset infos loading
             # Filter ground truth boxes by min points
-            if config.min_points is not None:
-                point_masks = roiaware_pool3d_utils.points_in_boxes_gpu(
-                        data_dict["points"][None, :, 0:3], data_dict["gt_boxes"][None, :, :7]
-                    )
-                point_masks.squeeze(0)
+            # if config.min_points is not None:
+            #     point_masks = roiaware_pool3d_utils.points_in_boxes_gpu(
+            #             data_dict["points"][None, :, 0:3], data_dict["gt_boxes"][None, :, :7]
+            #         )
+            #     point_masks.squeeze_(0)
 
-                new_gt_boxes = []
-                for n_mask in range(point_masks.size(0)):
-                    num = point_masks[n_mask].sum()
-                    if num > config.min_points:
-                        new_gt_boxes.append(data_dict["gt_boxes"][n_mask])
-                if new_gt_boxes.__len__() > 0:
-                    data_dict["gt_boxes"] = torch.stack(new_gt_boxes)
-                print(new_gt_boxes.__len__() )
+            #     new_gt_boxes = []
+            #     for n_mask in range(point_masks.size(0)):
+            #         num = (point_masks == n_mask).sum()
+            #         if num > config.min_points:
+            #             new_gt_boxes.append(data_dict["gt_boxes"][n_mask])
+            #     if new_gt_boxes.__len__() > 0:
+            #         data_dict["gt_boxes"] = torch.stack(new_gt_boxes)
 
         return data_dict
-        
-    # def filter_gtboxes(self, data_processor , data_dict:dict=None, config:EasyDict=None):
-    #     if data_dict is None:
-    #         return partial(self.filter_gtboxes, data_processor=data_processor, config=config)
-        
-    #     return data_dict
 
-    def physical_adversary(self, data_processor , data_dict:dict=None, config:EasyDict=None):
+    def physical_adversary(self, data_processor:DataProcessor, data_dict:dict=None, config:EasyDict=None):
         if data_dict is None:
             return partial(self.physical_adversary, data_processor=data_processor, config=config)
         
