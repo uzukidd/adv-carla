@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch3d
+import lightning as L
 from pytorch3d.ops import sample_points_from_meshes
 from pytorch3d.structures import Meshes, join_meshes_as_batch, join_meshes_as_scene
 
@@ -17,11 +18,12 @@ from pcdet.datasets.processor.data_processor import DataProcessor
 from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
 
 from .base import adversarial_patch_3d
+from . import eval_utils
 
 from typing import Union
 
 class physical_adversary:
-    def __init__(self, adversary_config:dict):
+    def __init__(self, adversary_config:EasyDict):
         self.config = adversary_config
         self.car_adv_patch_scale = self.config.car_adv_patch_scale
         self.car_adv_patch_level = self.config.car_adv_patch_level
@@ -42,6 +44,12 @@ class physical_adversary:
     def configure_adversary(self, adversarial_patch:adversarial_patch_3d, lidar:LiDAR_base=None):
         self.adversarial_patch = adversarial_patch
         self.lidar = lidar
+        
+    def evaluate_adversary(self, result_dict, dataset:str, log_dir:str):
+        dataset_eval:eval_utils.dataset_evaluation = eval_utils.__all__[dataset]
+        asr_str, asr_dict = dataset_eval.evaluate_ASR(self.benchmark, result_dict, log_dir)
+        
+        return asr_str, asr_dict
 
     def check_tensor(self, input:Union[np.ndarray, torch.Tensor]):
         if isinstance(input, np.ndarray):
@@ -61,12 +69,12 @@ class physical_adversary:
         
         if self.enbaled_adversary:
         
-            data_dict["points"] = self.check_tensor(data_dict["points"])
             data_dict["gt_boxes"] = self.check_tensor(data_dict["gt_boxes"])
 
             # Filter ground truth boxes by label
-            mask = torch.isin(data_dict["gt_boxes"][:, 7], config.target_label)
+            mask = torch.isin(data_dict["gt_boxes"][:, -1], config.target_label)
             data_dict["gt_boxes"] = data_dict["gt_boxes"][mask]
+            data_dict["gt_boxes"] = data_dict["gt_boxes"].detach().cpu().numpy()
 
             # We already filtered the ground truth boxes in dataset infos loading
             # Filter ground truth boxes by min points
@@ -94,13 +102,18 @@ class physical_adversary:
         
             data_dict["gt_boxes"] = self.check_tensor(data_dict["gt_boxes"])
             data_dict["points"] = self.check_tensor(data_dict["points"])
-
-            pos, lwh, theta, label = torch.split(data_dict["gt_boxes"].clone(), (3, 3, 1, 1), dim=1)
+            if data_dict["gt_boxes"].size(1) == 8:
+                pos, lwh, theta, label = torch.split(data_dict["gt_boxes"].clone(), (3, 3, 1, 1), dim=1)
+            elif data_dict["gt_boxes"].size(1) == 10: # includes velocity
+                pos, lwh, theta, vel, label = torch.split(data_dict["gt_boxes"].clone(), (3, 3, 1, 2, 1), dim=1)
+            else:
+                raise NotImplementedError
             pos[:, 2] += lwh[:, 2]/2.0
             data_dict["points"] = self.attach_adv_patch_scene_car_aux(data_dict["points"], 
                                                                 self.adversarial_patch,
                                                                 pos,
                                                                 theta,)
+            data_dict["gt_boxes"] = data_dict["gt_boxes"].detach().cpu().numpy()
 
         return data_dict
         
@@ -132,6 +145,10 @@ class physical_adversary:
                         # extend_pts = F.pad(extend_pts,  (0, 1), "constant", 1.0)
             random_reflectness = torch.rand(extend_pts.shape[0], 1).to(extend_pts.device)  # (N, 1)
             extend_pts = torch.cat([extend_pts, random_reflectness], dim=1)
+
+            if points.size(1) == 5: # include timestamp
+                timestamp = points[0, 4]
+                extend_pts = F.pad(extend_pts,  (0, 1), "constant", timestamp)
 
             pts_set.append(extend_pts)
                 

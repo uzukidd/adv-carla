@@ -10,6 +10,7 @@ from torch import optim, nn, utils, Tensor
 from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
+from torch.optim import Optimizer
 import torch.distributed as dist
 from pytorch3d.io import save_obj
 
@@ -29,7 +30,7 @@ from data_utils import voxel_collate_batch, resgister_data_processor
 from loss_utils import relevant_bounding_box_loss
 
 from functools import partial
-from typing import List, Optional
+from typing import List, Optional, Iterable, Callable
 
 class print_logger:
     def info(self, *args, **kwargs):
@@ -101,6 +102,8 @@ class pcdet_dataset(L.LightningDataModule):
         return batch_dict
     
     def ddp_sampler(self):
+        if self.trainer._accelerator_connector.use_distributed_sampler:
+            return None
         return DistributedSampler(self.dataset, self.trainer.world_size, self.trainer.local_rank, shuffle=False)
 
     def build_datalaoder(self) -> DataLoader:
@@ -139,9 +142,12 @@ class adversarial_patch(L.LightningModule):
         super().__init__()
         self.universal_adv_patch_car = single_sphere(semi_scale=torch.Tensor(car_adv_patch_scale).to(self.device),
                                                      level=car_adv_patch_level)
-
+OptimizerCallable = Callable[[Iterable], Optimizer]
 class physical_attack(L.LightningModule):
-    def __init__(self, pcdet_model_config, adversary_config:Optional[dict] = None):
+    def __init__(self, 
+                 pcdet_model_config,
+                 adversary_config:Optional[dict] = None,
+                 optimizer: OptimizerCallable = torch.optim.Adam):
         """
             Dataset (OpenPCDet) -> Lightning
             Adversarial Dataset -> Lightning
@@ -159,6 +165,7 @@ class physical_attack(L.LightningModule):
 
         self.print_logger = None
         self.datamodule:pcdet_dataset = None
+        self.optimizer = optimizer
 
         self.benchmark = None
         self.adversarial_patch = None
@@ -247,9 +254,7 @@ class physical_attack(L.LightningModule):
             self.print(result_str)
 
             if self.adversary is not None and self.adversary.benchmark is not None:
-                from eval_utils import eval_utils
-                dataset_eval:eval_utils.dataset_evaluation = eval_utils.__all__[self.datamodule.pcdet_dataset_config.DATASET]
-                asr_str, asr_dict = dataset_eval.eval_asr(self.adversary.benchmark, result_dict)
+                asr_str, asr_dict = self.adversary.evaluate_adversary(result_dict, self.datamodule.pcdet_dataset_config.DATASET, self.trainer.log_dir)
                 with open(os.path.join(self.trainer.log_dir, f"epoch_{self.current_epoch}_adversarial_dict.json"), "w", encoding="utf-8") as f:
                     json.dump(asr_dict, f, ensure_ascii=False, indent=4)
                 self.print(asr_str)
@@ -345,11 +350,12 @@ class physical_attack(L.LightningModule):
         self.evaluate_pred_result()
         
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=1e-3)
+        optimizer = self.optimizer(self.parameters())
+        print(type(optimizer), flush=True)
         return optimizer
 
 def cli_main():
-    cli = LightningCLI(physical_attack, pcdet_dataset)
+    cli = LightningCLI(physical_attack, pcdet_dataset, auto_configure_optimizers=False)
     # note: don't call fit!!
 
 if __name__ == "__main__":
