@@ -60,9 +60,9 @@ class physical_adversary:
         
         return input
         
-    def collate_gtboxes(self, data_processor:DataProcessor, data_dict:dict=None, config:EasyDict=None):
+    def collate_gtboxes(self, data_dict:dict=None, config:EasyDict=None):
         if data_dict is None:
-            return partial(self.collate_gtboxes, data_processor=data_processor, config=config)
+            return partial(self.collate_gtboxes, config=config)
         
         if not isinstance(config.target_label, torch.Tensor):
             config.target_label = torch.tensor(config.target_label).to(self.adversarial_patch.device)
@@ -94,9 +94,9 @@ class physical_adversary:
 
         return data_dict
 
-    def physical_adversary(self, data_processor:DataProcessor, data_dict:dict=None, config:EasyDict=None):
+    def physical_adversary(self, data_dict:dict=None, config:EasyDict=None):
         if data_dict is None:
-            return partial(self.physical_adversary, data_processor=data_processor, config=config)
+            return partial(self.physical_adversary, config=config)
         
         if self.enbaled_adversary:
         

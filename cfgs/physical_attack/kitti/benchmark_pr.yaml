@@ -8,7 +8,7 @@ data:
     _BASE_CONFIG_: cfgs/pcdet/dataset_configs/kitti_dataset.yaml
     DATA_PATH: data/kitti
 
-    # MIN_POINTS_IN_ALL_ANNO: 10 
+    MIN_POINTS_IN_ALL_ANNO: 10 
 
     DATA_SPLIT: {
         'train': null,
@@ -25,8 +25,8 @@ data:
         - NAME: mask_points_and_boxes_outside_range
           REMOVE_OUTSIDE_BOXES: True
 
-        # - NAME: constant_reflectness
-        #   constant: 0.0
+        - NAME: constant_reflectness
+          constant: 0.0
 
         - NAME: sample_points_aux
           NUM_POINTS: {
@@ -36,6 +36,7 @@ data:
 
 model:
   adversary_config: null
+
   pcdet_model_config: 
     _BASE_CONFIG_: cfgs/pcdet/kitti_models/pointrcnn.yaml
     ckpt_path: /mnt/sda/modelzoo/pcdet/kitti/pointrcnn_7870.pth

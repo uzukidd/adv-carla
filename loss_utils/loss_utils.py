@@ -20,7 +20,7 @@ class relevant_bounding_box_loss(nn.Module):
         self.iou_threshold = 0.1
         self.score_threshold = 0.1
 
-    def forward(self, data_dict:dict, gt_boxes:torch.Tensor):
+    def forward(self, data_dict:dict, gt_boxes:torch.Tensor, normalize:str=None):
         preds_scores:torch.Tensor = data_dict["pred_scores"]    # [N, ]
         preds_boxes:torch.Tensor = data_dict["pred_boxes"]      # [N, 7] or [N, 9]
         pred_labels:torch.Tensor = data_dict["pred_labels"]     # [N, ]
@@ -37,6 +37,7 @@ class relevant_bounding_box_loss(nn.Module):
             gt_boxes, gt_vels, gt_labels = torch.split(gt_boxes, [7, 2, 1], dim=1)  # [M, 7], [M, 2], [M, 1]
         else:
             raise NotImplementedError
+        
         gt_boxes = gt_boxes[gt_labels[:, 0] == self.target]
         gt_labels = gt_labels[gt_labels[:, 0] == self.target]
 
