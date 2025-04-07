@@ -1,5 +1,6 @@
 # dataset, log or cache
 dummy
+wandb
 lightning_logs
 data_processing.ipynb
 visualization.ipynb

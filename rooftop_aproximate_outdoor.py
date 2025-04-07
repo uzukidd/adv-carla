@@ -14,7 +14,6 @@ torch.cuda.manual_seed_all(UNI_RANDOM_SEED)
 torch.cuda.set_device(DEVICE)
 
 
-import pdb
 import argparse
 
 import open3d as o3d

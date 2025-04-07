@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 import voxel_ops
-import pdb
 
 from pcdet.datasets.processor.data_processor import DataProcessor
 

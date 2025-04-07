@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import pdb
 
 from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d
 from cudaext.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu

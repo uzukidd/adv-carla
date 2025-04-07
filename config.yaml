@@ -1,0 +1,148 @@
+# lightning.pytorch==2.5.1
+seed_everything: 0
+trainer:
+  accelerator: auto
+  strategy: auto
+  devices: 1
+  num_nodes: 1
+  precision: null
+  logger:
+    class_path: lightning.pytorch.loggers.WandbLogger
+    init_args:
+      name: null
+      save_dir: .
+      version: null
+      offline: false
+      dir: null
+      id: null
+      anonymous: null
+      project: physical-attack
+      log_model: false
+      experiment: null
+      prefix: ''
+      checkpoint_name: null
+      entity: null
+      notes: null
+      tags: null
+      config: null
+      config_exclude_keys: null
+      config_include_keys: null
+      allow_val_change: null
+      group: null
+      job_type: null
+      mode: null
+      force: null
+      reinit: null
+      resume: null
+      resume_from: null
+      fork_from: null
+      save_code: null
+      tensorboard: null
+      sync_tensorboard: null
+      monitor_gym: null
+      settings: null
+  callbacks: null
+  fast_dev_run: false
+  max_epochs: 1
+  min_epochs: null
+  max_steps: -1
+  min_steps: null
+  max_time: null
+  limit_train_batches: null
+  limit_val_batches: null
+  limit_test_batches: null
+  limit_predict_batches: null
+  overfit_batches: 0.0
+  val_check_interval: null
+  check_val_every_n_epoch: 1
+  num_sanity_val_steps: 0
+  log_every_n_steps: null
+  enable_checkpointing: null
+  enable_progress_bar: null
+  enable_model_summary: null
+  accumulate_grad_batches: 1
+  gradient_clip_val: null
+  gradient_clip_algorithm: null
+  deterministic: null
+  benchmark: null
+  inference_mode: true
+  use_distributed_sampler: false
+  profiler: null
+  detect_anomaly: false
+  barebones: false
+  plugins: null
+  sync_batchnorm: false
+  reload_dataloaders_every_n_epochs: 0
+  default_root_dir: null
+  model_registry: null
+model:
+  pcdet_model_config:
+    _BASE_CONFIG_: cfgs/pcdet/kitti_models/pointpillar.yaml
+    ckpt_path: /mnt/sda/modelzoo/pcdet/kitti/pointpillar_7728.pth
+  adversary_config: null
+  optimizer:
+    class_path: torch.optim.Adam
+    init_args:
+      lr: 0.001
+      betas:
+      - 0.9
+      - 0.999
+      eps: 1.0e-08
+      weight_decay: 0.0
+      amsgrad: false
+      foreach: null
+      maximize: false
+      capturable: false
+      differentiable: false
+      fused: null
+  target_encoder:
+    class_path: attack_utils.encode_adversarial_target
+data:
+  pcdet_dataset_config:
+    _BASE_CONFIG_: cfgs/pcdet/dataset_configs/kitti_dataset.yaml
+    DATA_PATH: data/kitti
+    MIN_POINTS_IN_ALL_ANNO: 10
+    DATA_SPLIT:
+      train: null
+      test: trainval
+    INFO_PATH:
+      train:
+      - null
+      test:
+      - kitti_infos_trainval.pkl
+    POINT_CLOUD_RANGE:
+    - 0
+    - -39.68
+    - -3
+    - 69.12
+    - 39.68
+    - 1
+    DATA_PROCESSOR:
+    - NAME: mask_points_and_boxes_outside_range
+      REMOVE_OUTSIDE_BOXES: true
+    - NAME: shuffle_points
+      SHUFFLE_ENABLED:
+        train: true
+        test: false
+    - NAME: constant_reflectness
+      constant: 0.0
+    - NAME: differentiable_voxelize
+      RETAIN_GRAPH: false
+      END_TO_END_MODE: false
+      DETERMINISTIC: true
+      VOXEL_SIZE:
+      - 0.16
+      - 0.16
+      - 4
+      MAX_POINTS_PER_VOXEL: 32
+      MAX_NUMBER_OF_VOXELS:
+        train: 40000
+        test: 40000
+  class_names:
+  - Car
+  - Pedestrian
+  - Cyclist
+  batch_size: 8
+  workers: 63
+ckpt_path: null
+verbose: true

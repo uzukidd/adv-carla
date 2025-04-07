@@ -13,6 +13,10 @@ fit:
 
 test:
   trainer:
+    logger:
+      class_path: lightning.pytorch.loggers.WandbLogger
+      init_args:
+        project: "physical-attack"
     devices: 1
   data:
     class_names: ['Car', 'Pedestrian', 'Cyclist']

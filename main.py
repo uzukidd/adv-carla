@@ -31,7 +31,6 @@ from white_box_attack import run_one_epoch_white_box_attack
 from query_attack import run_one_epoch_query_attack
 
 import json
-import pdb
 import argparse
 import os
 import time

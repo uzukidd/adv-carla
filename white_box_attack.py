@@ -2,15 +2,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-import pdb
 from tqdm import tqdm
 torch.autograd.set_detect_anomaly(True)
 
 import loss_utils.loss_reduce_func as loss_reduce_func
 from data_tools import adv_dataset
 from loss_utils import relevant_bounding_box_loss
-
-import pdb
 
 
 class stage_wise_full_attack(nn.Module):

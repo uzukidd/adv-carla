@@ -11,12 +11,12 @@ data:
 
     DATA_SPLIT: {
         'train': null,
-        'test': train
+        'test': val
     }
 
     INFO_PATH: {
         'train': [null],
-        'test': [nuscenes_infos_10sweeps_train.pkl],
+        'test': [nuscenes_infos_10sweeps_val.pkl],
     }
 
     POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
@@ -35,8 +35,8 @@ data:
         
         - NAME: physical_adversary
 
-        - NAME: constant_reflectness
-          constant: 0.0
+        # - NAME: constant_reflectness
+        #   constant: 0.0
 
         - NAME: differentiable_voxelize
           RETAIN_GRAPH: False
@@ -51,9 +51,11 @@ data:
 
 model:
   adversary_config:
-    benchmark_path: assets/benchmark/nuscenes/clean_metrics_summary_with_no_reflectness.json
+    benchmark_path: assets/benchmark/nuscenes/pp/clean_metrics_summary.json
     car_adv_patch_scale: [0.7, 0.7, 0.5]
     car_adv_patch_level: 2
+  target_encoder: 
+    class_path: attack_utils.end_to_end_detector
   pcdet_model_config: 
     _BASE_CONFIG_: cfgs/pcdet/nuscenes_models/cbgs_pp_multihead.yaml
     ckpt_path: /mnt/sda/modelzoo/pcdet/nuscenes/pp_multihead_nds5823_updated.pth

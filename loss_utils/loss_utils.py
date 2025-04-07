@@ -6,7 +6,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Callable, Optional
 
-import pdb
 
 from pcdet.ops.iou3d_nms import iou3d_nms_utils
 # from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d

@@ -4,7 +4,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-import pdb
 import pickle as pkl
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -23,7 +22,6 @@ from data_tools import adv_dataset, kitti_carla_dataset
 from eval_utils import eval_utils
 from loss_utils import relevant_bounding_box_loss
 
-import pdb
 import argparse
 import os
 import time
