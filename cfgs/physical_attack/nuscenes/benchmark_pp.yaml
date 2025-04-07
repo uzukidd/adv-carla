@@ -1,8 +1,22 @@
+trainer:
+  num_sanity_val_steps: 0
+  max_epochs: 1
+#   use_distributed_sampler: false
+
 data:
   pcdet_dataset_config: 
     _BASE_CONFIG_: cfgs/pcdet/dataset_configs/nuscenes_dataset.yaml
-    DATA_PATH: '/mnt/sda/datasets/nuscenes/'
+    DATA_PATH: 'data/nuscenes'
+    DATA_SPLIT: {
+        'train': null,
+        'test': train
+    }
 
+    INFO_PATH: {
+        'train': [null],
+        'test': [nuscenes_infos_10sweeps_train.pkl],
+    }
+    FILTER_MIN_POINTS_IN_GT: 10
     POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
     DATA_PROCESSOR:
         -   NAME: mask_points_and_boxes_outside_range
@@ -13,8 +27,14 @@ data:
                 'train': True,
                 'test': True
             }
+        
+        -   NAME: constant_reflectness
+            constant: 0.0
 
-        -   NAME: transform_points_to_voxels
+        -   NAME: differentiable_voxelize
+            RETAIN_GRAPH: False
+            END_TO_END_MODE: False
+            DETERMINISTIC: True
             VOXEL_SIZE: [0.2, 0.2, 8.0]
             MAX_POINTS_PER_VOXEL: 20
             MAX_NUMBER_OF_VOXELS: {
@@ -23,9 +43,7 @@ data:
             }
 
 model:
-  benchmark_path: assets/benchmark/kitti/clean.json
-  car_adv_patch_scale: [0.7, 0.7, 0.5]
-  car_adv_patch_level: 2
+  adversary_config: null
   pcdet_model_config: 
     _BASE_CONFIG_: cfgs/pcdet/nuscenes_models/cbgs_pp_multihead.yaml
     ckpt_path: /mnt/sda/modelzoo/pcdet/nuscenes/pp_multihead_nds5823_updated.pth

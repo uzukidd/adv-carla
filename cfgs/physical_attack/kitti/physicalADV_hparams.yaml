@@ -5,6 +5,11 @@ fit:
     class_names: ['Car', 'Pedestrian', 'Cyclist']
     batch_size: 8
     workers: 63
+  model:
+    optimizer: 
+      class_path: torch.optim.Adam
+      init_args:
+        lr: 1e-3
 
 test:
   trainer:

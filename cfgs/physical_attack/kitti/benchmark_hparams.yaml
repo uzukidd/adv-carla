@@ -13,3 +13,5 @@ test:
     class_names: ['Car', 'Pedestrian', 'Cyclist']
     batch_size: 8
     workers: 63
+  model:
+    adversary_config: null
