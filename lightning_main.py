@@ -1,38 +1,41 @@
-import wandb
-from loss_utils import relevant_bounding_box_loss
-from lightning_module import convert_to_easydict, pcdet_dataset, pcdet_model
-from data_utils import resgister_data_processor
-from attack_utils import encode_adversarial_target, physical_adversary, single_sphere
-from torch.optim import Optimizer
-from raytorch.LiDAR import LiDAR_base
-from pytorch3d.io import save_obj
-from pcdet.utils import common_utils
-from lightning.pytorch.cli import LightningCLI
-import torch
-import lightning as L
-from typing import Callable, Iterable, List, Optional
-import os
-import json
 import sys
-import os
-os.environ["WANDB_DISABLE_GPU"] = "true"
-os.environ["WANDB_DISABLE_CODE"] = "true"
-
 
 global DEBUG_STATUS
-DEBUG_STATUS = 'pdb' in sys.modules
+DEBUG_STATUS = "pdb" in sys.modules
+
+import json
+import os
+from typing import Callable, Iterable, List, Optional
+
+import lightning as L
+import torch
+from lightning.pytorch.cli import LightningCLI
+from pcdet.utils import common_utils
+from pytorch3d.io import save_obj
+from raytorch.LiDAR import LiDAR_base
+from torch.optim import Optimizer
+
+import wandb
+from attack_utils import encode_adversarial_target, physical_adversary, single_sphere
+from data_utils import resgister_data_processor
+from lightning_module import convert_to_easydict, pcdet_dataset, pcdet_model
+from loss_utils import relevant_bounding_box_loss
+
+os.environ["WANDB_DISABLE_GPU"] = "true"
+os.environ["WANDB_DISABLE_CODE"] = "true"
 
 
 def breakpoint_if_pdb():
     if DEBUG_STATUS:
         import pdb
+
         pdb.set_trace()
 
 
 class adversarial_patch(L.LightningModule):
     def __init__(self, car_adv_patch_scale, car_adv_patch_level):
         super().__init__()
-        self.universal_adv_patch_car = single_sphere(
+        self.universal_adv_patch_hcar = single_sphere(
             semi_scale=torch.Tensor(car_adv_patch_scale).to(self.device),
             level=car_adv_patch_level,
         )
@@ -62,6 +65,7 @@ class physical_attack(L.LightningModule):
         self.save_hyperparameters()
 
         self.pcdet_model_config = convert_to_easydict(pcdet_model_config)
+
         self.pcdet_model = None
 
         self.print_logger = None
@@ -79,17 +83,18 @@ class physical_attack(L.LightningModule):
             resgister_data_processor(
                 "physical_adversary", self.adversary.physical_adversary
             )
-            resgister_data_processor(
-                "collate_gtboxes", self.adversary.collate_gtboxes)
+            resgister_data_processor("collate_gtboxes", self.adversary.collate_gtboxes)
 
         self.loss = relevant_bounding_box_loss(1)
 
     def configure_experiment_name(self):
-        experiment_name = (f"{self.trainer.datamodule.pcdet_dataset_config.DATASET}-"
-                           f"{self.pcdet_model_config.NAME}"
-                           f"")
+        experiment_name = (
+            f"{self.trainer.datamodule.pcdet_dataset_config.DATASET}-"
+            f"{self.pcdet_model_config.NAME}-"
+            f"{self.trainer.state.fn.value}"
+        )
         if getattr(self.trainer.logger, "_wandb_init", None) is not None:
-            self.trainer.logger._wandb_init['name'] = experiment_name
+            self.trainer.logger._wandb_init["name"] = experiment_name
 
     def configure_callbacks(self):
         self.configure_experiment_name()
@@ -98,8 +103,7 @@ class physical_attack(L.LightningModule):
     def configure_model(self):
         # Initialize logger
         self.print_logger = common_utils.create_logger(
-            os.path.join(self.trainer.log_dir,
-                         "runtime_log.log"), self.local_rank
+            os.path.join(self.trainer.log_dir, "runtime_log.log"), self.local_rank
         )
 
         self.datamodule = self.trainer.datamodule
@@ -111,6 +115,8 @@ class physical_attack(L.LightningModule):
         self.pcdet_model.freeze()
 
         if self.adversary is not None:
+            if wandb.run is not None:
+                wandb.run.summary.update(self.adversary_config)
             self.target_encoder = self.target_encoder(self.pcdet_model.model)
             self.adversarial_patch = single_sphere(
                 self.adversary.car_adv_patch_scale,
@@ -133,12 +139,9 @@ class physical_attack(L.LightningModule):
 
     def visualize_frame(self, point_clouds: torch.Tensor, gt_boxes: torch.Tensor):
         if self.local_rank == 0:
-            os.makedirs(os.path.join(
-                self.trainer.log_dir, "tmp"), exist_ok=True)
-            points_path = os.path.join(
-                self.trainer.log_dir, "tmp", "points.pt")
-            gt_boxes_path = os.path.join(
-                self.trainer.log_dir, "tmp", "gt_boxes.pt")
+            os.makedirs(os.path.join(self.trainer.log_dir, "tmp"), exist_ok=True)
+            points_path = os.path.join(self.trainer.log_dir, "tmp", "points.pt")
+            gt_boxes_path = os.path.join(self.trainer.log_dir, "tmp", "gt_boxes.pt")
             torch.save(point_clouds, points_path)
             torch.save(gt_boxes, gt_boxes_path)
             command = [
@@ -151,8 +154,7 @@ class physical_attack(L.LightningModule):
             ]
             import subprocess
 
-            subprocess.run(command, check=True, text=True,
-                           capture_output=False)
+            subprocess.run(command, check=True, text=True, capture_output=False)
             os.remove(points_path)
             os.remove(gt_boxes_path)
 
@@ -205,7 +207,13 @@ class physical_attack(L.LightningModule):
                 json.dump(result_dict, f, ensure_ascii=False, indent=4)
             self.print(result_str)
             # self.logger.log_metrics(result_dict)
-            wandb.run.summary.update(result_dict)
+            wandb.run.summary.update(
+                physical_adversary.evaluate_summary(
+                    result_dict,
+                    self.datamodule.pcdet_dataset_config.DATASET,
+                    self.trainer.log_dir,
+                )[1]
+            )
             self.logger.log_text("log_text", ["content"], [[result_str]])
 
             if self.adversary is not None and self.adversary.benchmark is not None:
@@ -223,8 +231,8 @@ class physical_attack(L.LightningModule):
                     encoding="utf-8",
                 ) as f:
                     json.dump(asr_dict, f, ensure_ascii=False, indent=4)
-                self.logger.log_text("log_text", ["content"], [[asr_str]])
-                wandb.run.summary.update(asr_dict)
+                # self.logger.log_text("log_text", ["content"], [[asr_str]])
+                # wandb.run.summary.update(asr_dict)
             # dict_keys(['Car_aos/easy_R40', 'Car_aos/moderate_R40', 'Car_aos/hard_R40', 'Car_3d/easy_R40', 'Car_3d/moderate_R40', 'Car_3d/hard_R40', 'Car_bev/easy_R40', 'Car_bev/moderate_R40', 'Car_bev/hard_R40', 'Car_image/easy_R40', 'Car_image/moderate_R40', 'Car_image/hard_R40', 'Pedestrian_aos/easy_R40', 'Pedestrian_aos/moderate_R40', 'Pedestrian_aos/hard_R40', 'Pedestrian_3d/easy_R40', 'Pedestrian_3d/moderate_R40', 'Pedestrian_3d/hard_R40', 'Pedestrian_bev/easy_R40', 'Pedestrian_bev/moderate_R40', 'Pedestrian_bev/hard_R40', 'Pedestrian_image/easy_R40', 'Pedestrian_image/moderate_R40', 'Pedestrian_image/hard_R40', 'Cyclist_aos/easy_R40', 'Cyclist_aos/moderate_R40', 'Cyclist_aos/hard_R40', 'Cyclist_3d/easy_R40', 'Cyclist_3d/moderate_R40', 'Cyclist_3d/hard_R40', 'Cyclist_bev/easy_R40', 'Cyclist_bev/moderate_R40', 'Cyclist_bev/hard_R40', 'Cyclist_image/easy_R40', 'Cyclist_image/moderate_R40', 'Cyclist_image/hard_R40'])
 
     """
@@ -254,8 +262,7 @@ class physical_attack(L.LightningModule):
 
         total_loss = torch.tensor(1e-6, device=self.device, requires_grad=True)
 
-        target_dicts = self.target_encoder.encode_target(
-            batch_dict, pred_dicts)
+        target_dicts = self.target_encoder.encode_target(batch_dict, pred_dicts)
         for batch_mask in range(batch_dict["batch_size"]):
             rrbbox_loss = self.loss.forward(
                 target_dicts[batch_mask], batch_dict["gt_boxes"][batch_mask]
@@ -320,9 +327,12 @@ class physical_attack(L.LightningModule):
 
 
 def cli_main():
-    cli = LightningCLI(physical_attack, pcdet_dataset,
-                       auto_configure_optimizers=False,
-                       save_config_kwargs={"overwrite": True})
+    cli = LightningCLI(
+        physical_attack,
+        pcdet_dataset,
+        auto_configure_optimizers=False,
+        save_config_kwargs={"overwrite": True},
+    )
     # note: don't call fit!!
 
 

@@ -1,5 +1,9 @@
 fit:
   trainer:
+    logger:
+      class_path: lightning.pytorch.loggers.WandbLogger
+      init_args:
+        project: "physical-attack"
     devices: 4
   data:
     class_names: ['car','truck', 'construction_vehicle', 'bus', 'trailer',
@@ -9,9 +13,16 @@ fit:
 
 test:
   trainer:
+    logger:
+      class_path: lightning.pytorch.loggers.WandbLogger
+      init_args:
+        project: "physical-attack"
     devices: 4
   data:
     class_names: ['car','truck', 'construction_vehicle', 'bus', 'trailer',
               'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
     batch_size: 8
     workers: 63
+  model:
+    adversary_config:
+      benchmark_path: clean_metrics_summary_with_no_reflectness.json

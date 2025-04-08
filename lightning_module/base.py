@@ -1,6 +1,6 @@
 from collections import defaultdict
 from typing import List
-
+import wandb
 import lightning as L
 import numpy as np
 import torch
@@ -52,8 +52,10 @@ class pcdet_dataset(L.LightningDataModule):
         class_names: List[str],
         batch_size: int,
         workers: int,
+        disabled_processing: list = None,
     ):
         super().__init__()
+        self.save_hyperparameters()
         self.pcdet_dataset_config = convert_to_easydict(pcdet_dataset_config)
 
         self.class_names = class_names
@@ -61,9 +63,17 @@ class pcdet_dataset(L.LightningDataModule):
         self.batch_size = batch_size
         self.workers = workers
 
+        self.disabled_processing = disabled_processing
+
+        if disabled_processing is not None:
+            self.pcdet_dataset_config.DATA_PROCESSOR = [
+                config for config in self.pcdet_dataset_config.DATA_PROCESSOR if config.NAME not in disabled_processing
+            ]
+
     def setup(self, stage: str) -> None:
         from pcdet import datasets
-
+        if wandb.run is not None:
+            wandb.run.summary.update({"disabled_processing": self.disabled_processing})
         print(f"STAGE: {stage}")
         if self.dataset is not None:
             return

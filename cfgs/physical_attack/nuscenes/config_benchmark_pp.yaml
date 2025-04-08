@@ -1,7 +1,7 @@
 trainer:
   num_sanity_val_steps: 0
   max_epochs: 1
-  # use_distributed_sampler: false
+#   use_distributed_sampler: false
 
 data:
   pcdet_dataset_config: 
@@ -30,32 +30,23 @@ data:
                 'test': True
             }
         
-        - NAME: collate_gtboxes
-          target_label: [1]
-        
-        - NAME: physical_adversary
+        -   NAME: constant_reflectness
+            constant: 0.0
 
-        # - NAME: constant_reflectness
-        #   constant: 0.0
-
-        - NAME: differentiable_voxelize
-          RETAIN_GRAPH: False
-          END_TO_END_MODE: True
-          DETERMINISTIC: True
-          VOXEL_SIZE: [0.2, 0.2, 8.0]
-          MAX_POINTS_PER_VOXEL: 20
-          MAX_NUMBER_OF_VOXELS: {
-              'train': 30000,
-              'test': 30000
-          }
+        -   NAME: differentiable_voxelize
+            RETAIN_GRAPH: False
+            END_TO_END_MODE: False
+            DETERMINISTIC: True
+            VOXEL_SIZE: [0.2, 0.2, 8.0]
+            MAX_POINTS_PER_VOXEL: 20
+            MAX_NUMBER_OF_VOXELS: {
+                'train': 30000,
+                'test': 30000
+            }
 
 model:
-  adversary_config:
-    benchmark_path: assets/benchmark/nuscenes/pp/clean_metrics_summary.json
-    car_adv_patch_scale: [0.7, 0.7, 0.5]
-    car_adv_patch_level: 2
-  target_encoder: 
-    class_path: attack_utils.end_to_end_detector
+  adversary_config: null
+  target_encoder: null
   pcdet_model_config: 
     _BASE_CONFIG_: cfgs/pcdet/nuscenes_models/cbgs_pp_multihead.yaml
     ckpt_path: /mnt/sda/modelzoo/pcdet/nuscenes/pp_multihead_nds5823_updated.pth

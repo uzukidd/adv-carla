@@ -1,26 +1,23 @@
-import numpy as np
+import json
+from functools import partial
+from typing import Union
 
+import lightning as L
+import numpy as np
+import pytorch3d
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import pytorch3d
-import lightning as L
-from pytorch3d.ops import sample_points_from_meshes
-from pytorch3d.structures import Meshes, join_meshes_as_batch, join_meshes_as_scene
-
-import json
-from functools import partial
 from easydict import EasyDict
-
-from voxel_ops import pcdet_registry
-from raytorch.LiDAR import LiDAR_base
 from pcdet.datasets.processor.data_processor import DataProcessor
 from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
+from pytorch3d.ops import sample_points_from_meshes
+from pytorch3d.structures import Meshes, join_meshes_as_batch, join_meshes_as_scene
+from raytorch.LiDAR import LiDAR_base
+from voxel_ops import pcdet_registry
 
-from .base import adversarial_patch_3d
 from . import eval_utils
-
-from typing import Union
+from .base import adversarial_patch_3d
 
 
 class physical_adversary:
@@ -42,25 +39,31 @@ class physical_adversary:
     def enable_adversary(self, adversary: bool = True):
         self.enbaled_adversary = adversary
 
-    def configure_adversary(self, adversarial_patch: adversarial_patch_3d, lidar: LiDAR_base = None):
+    def configure_adversary(
+        self, adversarial_patch: adversarial_patch_3d, lidar: LiDAR_base = None
+    ):
         self.adversarial_patch = adversarial_patch
         self.lidar = lidar
 
     def evaluate_adversary(self, result_dict, dataset: str, log_dir: str):
-        dataset_eval: eval_utils.dataset_evaluation = eval_utils.__all__[
-            dataset]
+        dataset_eval: eval_utils.dataset_evaluation = eval_utils.__all__[dataset]
         asr_str, asr_dict = dataset_eval.evaluate_ASR(
-            self.benchmark, result_dict, log_dir)
+            self.benchmark, result_dict, log_dir
+        )
         asr_dict = {f"ASR/{k}": v for k, v in asr_dict.items()}
 
         return asr_str, asr_dict
 
+    @staticmethod
+    def evaluate_summary(result_dict, dataset: str, log_dir: str):
+        dataset_eval: eval_utils.dataset_evaluation = eval_utils.__all__[dataset]
+        res_str, res_dict = dataset_eval.parse_raw_result(result_dict, log_dir)
+
+        return res_str, res_dict
+
     def check_tensor(self, input: Union[np.ndarray, torch.Tensor]):
         if isinstance(input, np.ndarray):
-            input = (
-                torch.from_numpy(input)
-                .to(self.adversarial_patch.device)
-            )
+            input = torch.from_numpy(input).to(self.adversarial_patch.device)
 
         return input
 
@@ -69,16 +72,16 @@ class physical_adversary:
             return partial(self.collate_gtboxes, config=config)
 
         if not isinstance(config.target_label, torch.Tensor):
-            config.target_label = torch.tensor(
-                config.target_label).to(self.adversarial_patch.device)
+            config.target_label = torch.tensor(config.target_label).to(
+                self.adversarial_patch.device
+            )
 
         if self.enbaled_adversary:
 
             data_dict["gt_boxes"] = self.check_tensor(data_dict["gt_boxes"])
 
             # Filter ground truth boxes by label
-            mask = torch.isin(data_dict["gt_boxes"]
-                              [:, -1], config.target_label)
+            mask = torch.isin(data_dict["gt_boxes"][:, -1], config.target_label)
             data_dict["gt_boxes"] = data_dict["gt_boxes"][mask]
             data_dict["gt_boxes"] = data_dict["gt_boxes"].detach().cpu().numpy()
 
@@ -110,35 +113,43 @@ class physical_adversary:
             data_dict["points"] = self.check_tensor(data_dict["points"])
             if data_dict["gt_boxes"].size(1) == 8:
                 pos, lwh, theta, label = torch.split(
-                    data_dict["gt_boxes"].clone(), (3, 3, 1, 1), dim=1)
+                    data_dict["gt_boxes"].clone(), (3, 3, 1, 1), dim=1
+                )
             elif data_dict["gt_boxes"].size(1) == 10:  # includes velocity
                 pos, lwh, theta, vel, label = torch.split(
-                    data_dict["gt_boxes"].clone(), (3, 3, 1, 2, 1), dim=1)
+                    data_dict["gt_boxes"].clone(), (3, 3, 1, 2, 1), dim=1
+                )
             else:
                 raise NotImplementedError
-            pos[:, 2] += lwh[:, 2]/2.0
-            data_dict["points"] = self.attach_adv_patch_scene_car_aux(data_dict["points"],
-                                                                      self.adversarial_patch,
-                                                                      pos,
-                                                                      theta,)
+            pos[:, 2] += lwh[:, 2] / 2.0
+            data_dict["points"] = self.attach_adv_patch_scene_car_aux(
+                data_dict["points"],
+                self.adversarial_patch,
+                pos,
+                theta,
+            )
             data_dict["gt_boxes"] = data_dict["gt_boxes"].detach().cpu().numpy()
 
         return data_dict
 
-    def attach_adv_patch_scene_car_aux(self, points: torch.Tensor, adv_patch: adversarial_patch_3d,
-                                       pos: torch.Tensor,  # [N, 3]
-                                       theta: torch.Tensor,  # [N, 1]
-                                       sample_amount=50,  # when lidar is None
-                                       adversarial_parameters=None,):
+    def attach_adv_patch_scene_car_aux(
+        self,
+        points: torch.Tensor,
+        adv_patch: adversarial_patch_3d,
+        pos: torch.Tensor,  # [N, 3]
+        theta: torch.Tensor,  # [N, 1]
+        sample_amount=50,  # when lidar is None
+        adversarial_parameters=None,
+    ):
         pts_set = [points]
         meshes_batch = []
         n = pos.size(0)
         for i in range(n):
             extend_pts = None
 
-            transformed_mesh = adv_patch.get_transformed_meshes(pos[i:i+1],
-                                                                theta[i],
-                                                                adversarial_parameters)
+            transformed_mesh = adv_patch.get_transformed_meshes(
+                pos[i : i + 1], theta[i], adversarial_parameters
+            )
             meshes_batch.append(transformed_mesh)
 
         if meshes_batch.__len__() != 0:
@@ -147,17 +158,17 @@ class physical_adversary:
             if self.lidar is not None:
                 extend_pts = self.lidar.scan_triangles(meshes_batch)
             else:
-                extend_pts = sample_points_from_meshes(
-                    meshes_batch, sample_amount * n)
+                extend_pts = sample_points_from_meshes(meshes_batch, sample_amount * n)
 
                 # extend_pts = F.pad(extend_pts,  (0, 1), "constant", 1.0)
-            random_reflectness = torch.rand(
-                extend_pts.shape[0], 1).to(extend_pts.device)  # (N, 1)
+            random_reflectness = torch.rand(extend_pts.shape[0], 1).to(
+                extend_pts.device
+            )  # (N, 1)
             extend_pts = torch.cat([extend_pts, random_reflectness], dim=1)
 
             if points.size(1) == 5:  # include timestamp
                 timestamp = points[0, 4]
-                extend_pts = F.pad(extend_pts,  (0, 1), "constant", timestamp)
+                extend_pts = F.pad(extend_pts, (0, 1), "constant", timestamp)
 
             pts_set.append(extend_pts)
 
