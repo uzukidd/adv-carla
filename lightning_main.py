@@ -12,6 +12,7 @@ import torch
 from lightning.pytorch.cli import LightningCLI
 from pcdet.utils import common_utils
 from pytorch3d.io import save_obj
+from pytorch_lightning.callbacks import ModelCheckpoint
 from raytorch.LiDAR import LiDAR_base
 from torch.optim import Optimizer
 
@@ -87,6 +88,11 @@ class physical_attack(L.LightningModule):
 
         self.loss = relevant_bounding_box_loss(1)
 
+    def get_logging_dir(self):
+        if wandb.run is not None:
+            return wandb.run.dir
+        return None
+
     def configure_experiment_name(self):
         experiment_name = (
             f"{self.trainer.datamodule.pcdet_dataset_config.DATASET}-"
@@ -102,9 +108,10 @@ class physical_attack(L.LightningModule):
 
     def configure_model(self):
         # Initialize logger
-        self.print_logger = common_utils.create_logger(
-            os.path.join(self.trainer.log_dir, "runtime_log.log"), self.local_rank
-        )
+        if self.local_rank == 0:
+            self.print_logger = common_utils.create_logger(
+                os.path.join(self.get_logging_dir(), "runtime_log.log"), self.local_rank
+            )
 
         self.datamodule = self.trainer.datamodule
         self.pcdet_model = pcdet_model(
@@ -135,7 +142,8 @@ class physical_attack(L.LightningModule):
             )
 
     def print(self, *args, **kwargs):
-        self.print_logger.info(*args, **kwargs)
+        if self.local_rank == 0:
+            self.print_logger.info(*args, **kwargs)
 
     def visualize_frame(self, point_clouds: torch.Tensor, gt_boxes: torch.Tensor):
         if self.local_rank == 0:
@@ -159,12 +167,13 @@ class physical_attack(L.LightningModule):
             os.remove(gt_boxes_path)
 
     def on_save_checkpoint(self, checkpoint):
-        adversarial_meshes = self.adversarial_patch.get_transformed_meshes()
-        save_obj(
-            os.path.join(self.trainer.log_dir, "adversarial_meshes.obj"),
-            adversarial_meshes.verts_packed(),
-            adversarial_meshes.faces_packed(),
-        )
+        if self.local_rank == 0:
+            adversarial_meshes = self.adversarial_patch.get_transformed_meshes()
+            save_obj(
+                os.path.join(self.get_logging_dir(), "adversarial_meshes.obj"),
+                adversarial_meshes.verts_packed(),
+                adversarial_meshes.faces_packed(),
+            )
 
         all_parameter = dict(self.named_parameters())
         for name, param in all_parameter.items():
@@ -195,11 +204,12 @@ class physical_attack(L.LightningModule):
                 self.det_annos,
                 self.datamodule.class_names,
                 eval_metric=self.pcdet_model_config.POST_PROCESSING.EVAL_METRIC,
-                output_path=self.trainer.log_dir,
+                output_path=self.get_logging_dir(),
             )
             with open(
                 os.path.join(
-                    self.trainer.log_dir, f"epoch_{self.current_epoch}_result_dict.json"
+                    self.get_logging_dir(),
+                    f"epoch_{self.current_epoch}_result_dict.json",
                 ),
                 "w",
                 encoding="utf-8",
@@ -211,7 +221,7 @@ class physical_attack(L.LightningModule):
                 physical_adversary.evaluate_summary(
                     result_dict,
                     self.datamodule.pcdet_dataset_config.DATASET,
-                    self.trainer.log_dir,
+                    self.get_logging_dir(),
                 )[1]
             )
             self.logger.log_text("log_text", ["content"], [[result_str]])
@@ -220,11 +230,11 @@ class physical_attack(L.LightningModule):
                 asr_str, asr_dict = self.adversary.evaluate_adversary(
                     result_dict,
                     self.datamodule.pcdet_dataset_config.DATASET,
-                    self.trainer.log_dir,
+                    self.get_logging_dir(),
                 )
                 with open(
                     os.path.join(
-                        self.trainer.log_dir,
+                        self.get_logging_dir(),
                         f"epoch_{self.current_epoch}_adversarial_dict.json",
                     ),
                     "w",
@@ -314,6 +324,7 @@ class physical_attack(L.LightningModule):
 
     def on_test_epoch_start(self):
         self.det_annos = []
+        breakpoint_if_pdb()
 
     def test_step(self, batch_dict, batch_idx):
         self.iterate_evaluation(batch_dict, batch_idx)
@@ -327,11 +338,16 @@ class physical_attack(L.LightningModule):
 
 
 def cli_main():
+    # checkpoint_callback = ModelCheckpoint(
+    #     dirpath="checkpoints/",
+    #     filename="adversary-{epoch:02d}",
+    # )
     cli = LightningCLI(
         physical_attack,
         pcdet_dataset,
         auto_configure_optimizers=False,
-        save_config_kwargs={"overwrite": True},
+        save_config_callback=None,
+        # callbacks=[checkpoint_callback],
     )
     # note: don't call fit!!
 

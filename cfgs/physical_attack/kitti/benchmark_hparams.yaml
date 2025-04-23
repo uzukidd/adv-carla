@@ -7,14 +7,24 @@ fit:
 
     devices: 1
   data:
+    disabled_processing: ['constant_reflectness']
     class_names: ['Car', 'Pedestrian', 'Cyclist']
     batch_size: 8
     workers: 63
+  model:
+    adversary_config: null
+   
 
 test:
   trainer:
+    logger:
+      class_path: lightning.pytorch.loggers.WandbLogger
+      init_args:
+        project: "physical-attack"
+        log_model: true
     devices: 1
   data:
+    disabled_processing: ['constant_reflectness']
     class_names: ['Car', 'Pedestrian', 'Cyclist']
     batch_size: 8
     workers: 63

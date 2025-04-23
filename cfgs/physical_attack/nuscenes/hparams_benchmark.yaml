@@ -4,6 +4,7 @@ fit:
         class_path: lightning.pytorch.loggers.WandbLogger
         init_args:
           project: "physical-attack"
+          log_model: true
     devices: 4
   data:
     class_names: ['car','truck', 'construction_vehicle', 'bus', 'trailer',
@@ -18,6 +19,7 @@ test:
       class_path: lightning.pytorch.loggers.WandbLogger
       init_args:
         project: "physical-attack"
+        log_model: true
     devices: 4
   data:
     class_names: ['car','truck', 'construction_vehicle', 'bus', 'trailer',
