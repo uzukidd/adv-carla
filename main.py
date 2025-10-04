@@ -169,7 +169,7 @@ def parse_config():
 def set_seed_and_device(args):
     ### Set the seed for numpy, torch, and device for cuda
     random.seed(args.UNI_RANDOM_SEED)
-    np.random.seed(args.UNI_RANDOM_SEED) 
+    np.random.seed(args.UNI_RANDOM_SEED)
     torch.manual_seed(args.UNI_RANDOM_SEED)
 
     torch.cuda.manual_seed(args.UNI_RANDOM_SEED)

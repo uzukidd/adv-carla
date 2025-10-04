@@ -78,6 +78,7 @@ class physical_attack(L.LightningModule):
         self.adversarial_patch = None
         self.adversary = None
 
+        # Load adversary configuration and register pre-processing modules
         if adversary_config is not None:
             self.adversary_config = convert_to_easydict(adversary_config)
             self.adversary = physical_adversary(self.adversary_config)
@@ -107,6 +108,7 @@ class physical_attack(L.LightningModule):
         return super().configure_callbacks()
 
     def configure_model(self):
+        
         # Initialize logger
         if self.local_rank == 0:
             self.print_logger = common_utils.create_logger(
@@ -271,7 +273,7 @@ class physical_attack(L.LightningModule):
         pred_dicts, ret_dict = self.pcdet_model(batch_dict)
 
         total_loss = torch.tensor(1e-6, device=self.device, requires_grad=True)
-
+        
         target_dicts = self.target_encoder.encode_target(batch_dict, pred_dicts)
         for batch_mask in range(batch_dict["batch_size"]):
             rrbbox_loss = self.loss.forward(
