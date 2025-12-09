@@ -8,7 +8,7 @@ fit:
 
     devices: 1
   data:
-    disabled_processing: ['constant_reflectness']
+    # disabled_processing: ['constant_reflectness']
     class_names: ['Car', 'Pedestrian', 'Cyclist']
     batch_size: 8
     workers: 63
@@ -26,7 +26,7 @@ test:
         log_model: true
     devices: 1
   data:
-    disabled_processing: ['constant_reflectness']
+    # disabled_processing: ['constant_reflectness']
     class_names: ['Car', 'Pedestrian', 'Cyclist']
     batch_size: 8
     workers: 63

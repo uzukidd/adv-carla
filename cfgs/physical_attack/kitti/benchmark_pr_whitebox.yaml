@@ -25,28 +25,18 @@ data:
         - NAME: mask_points_and_boxes_outside_range
           REMOVE_OUTSIDE_BOXES: True
 
-        # - NAME: shuffle_points
-        #   SHUFFLE_ENABLED: {
-        #     'train': True,
-        #     'test': False
-        #   }
-
         - NAME: constant_reflectness
           constant: 0.0
 
-        - NAME: differentiable_voxelize
-          RETAIN_GRAPH: False
-          END_TO_END_MODE: False
-          DETERMINISTIC: True
-          VOXEL_SIZE: [0.16, 0.16, 4]
-          MAX_POINTS_PER_VOXEL: 32
-          MAX_NUMBER_OF_VOXELS: {
-            'train': 40000,
-            'test': 40000
-                  }
+        - NAME: sample_points_aux
+          NUM_POINTS: {
+              'train': 16384,
+              'test': 16384
+          }
 
 model:
   adversary_config: null
+
   pcdet_model_config: 
-    _BASE_CONFIG_: cfgs/pcdet/kitti_models/pointpillar.yaml
-    ckpt_path: /mnt/sda/modelzoo/pcdet/kitti/pointpillar_7728.pth
+    _BASE_CONFIG_: cfgs/pcdet/kitti_models/pointrcnn_whitebox.yaml
+    ckpt_path: /mnt/sda/modelzoo/pcdet/kitti/pointrcnn_7870.pth

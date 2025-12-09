@@ -33,6 +33,7 @@ class end_to_end_detector(encode_adversarial_target):
         super().__init__(model=model)
 
     def encode_target(self, batch_dict, pred_dicts):
+        # import pdb;pdb.set_trace()
         return pred_dicts
 
 class pointrcnn_rpn(encode_adversarial_target):
@@ -80,6 +81,3 @@ class pointrcnn_rpn(encode_adversarial_target):
 
         # pdb.set_trace()
         return encoded_dicts
-
-
-#

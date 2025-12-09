@@ -17,6 +17,7 @@ from pytorch3d.transforms import (
 )
 
 from abc import ABC, abstractmethod
+from typing import List, Dict
 
 
 class adversarial_patch_3d(nn.Module, ABC):
@@ -44,21 +45,21 @@ class adversarial_patch_3d(nn.Module, ABC):
             theta, "Z", degrees=False
         )
 
-    def get_parameters(self) -> list[torch.Tensor]:
+    def get_parameters(self) -> Dict[str, torch.Tensor]:
         parameters = {"_T": self._T, "_theta": self._theta}
         return parameters
 
-    def load_parameter(self, parameters: list) -> None:
+    def load_parameter(self, parameters: Dict[str, torch.Tensor]) -> None:
         self._theta = parameters["_theta"]
         self._T = parameters["_T"]
 
     @abstractmethod
     def get_basic_meshes(self) -> Meshes:
-        return None
+        ...
 
     @abstractmethod
     def get_deformed_meshes(self) -> Meshes:
-        return None
+        ...
 
     @abstractmethod
     def get_transformed_meshes(
@@ -67,11 +68,11 @@ class adversarial_patch_3d(nn.Module, ABC):
         theta: torch.Tensor,
         adversarial_parameters: list[torch.Tensor],
     ) -> Meshes:
-        return None
+        ...
 
     @abstractmethod
     def get_regularization_loss(self) -> torch.Tensor:
-        return None
+        ...
 
     def constrain_grad(self, allow_rotate: bool = False):
         if self._T.grad is not None:

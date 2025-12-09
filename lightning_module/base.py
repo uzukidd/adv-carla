@@ -56,8 +56,9 @@ class pcdet_dataset(L.LightningDataModule):
     ):
         super().__init__()
         self.save_hyperparameters()
+        print(pcdet_dataset_config)
         self.pcdet_dataset_config = convert_to_easydict(pcdet_dataset_config)
-
+        
         self.class_names = class_names
         self.dataset = None
         self.batch_size = batch_size
@@ -78,6 +79,7 @@ class pcdet_dataset(L.LightningDataModule):
         if self.dataset is not None:
             return
 
+        # Using the same dataset while in training and testing
         if stage in ("fit", "validate"):
             self.dataset: DatasetTemplate = datasets.__all__[
                 self.pcdet_dataset_config.DATASET

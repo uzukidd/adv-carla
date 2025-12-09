@@ -10,9 +10,11 @@ fit:
   data:
     disabled_processing: ['constant_reflectness']
     class_names: ['Car', 'Pedestrian', 'Cyclist']
-    batch_size: 8
+    batch_size: 1
     workers: 63
   model:
+    save_scene_every_n_batches: 100
+    regularization_weight: 1e-3
     adversary_config: null
    
 
@@ -28,7 +30,9 @@ test:
   data:
     disabled_processing: ['constant_reflectness']
     class_names: ['Car', 'Pedestrian', 'Cyclist']
-    batch_size: 8
+    batch_size: 1
     workers: 63
   model:
+    save_scene_every_n_batches: 100
+    regularization_weight: 1e-3
     adversary_config: null

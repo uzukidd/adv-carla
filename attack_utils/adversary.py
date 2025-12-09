@@ -1,6 +1,6 @@
 import json
 from functools import partial
-from typing import Union
+from typing import Union, Optional, Dict
 
 import lightning as L
 import numpy as np
@@ -40,7 +40,7 @@ class physical_adversary:
         self.enbaled_adversary = adversary
 
     def configure_adversary(
-        self, adversarial_patch: adversarial_patch_3d, lidar: LiDAR_base = None
+        self, adversarial_patch: adversarial_patch_3d, lidar: Optional[LiDAR_base] = None
     ):
         self.adversarial_patch = adversarial_patch
         self.lidar = lidar
@@ -67,7 +67,7 @@ class physical_adversary:
 
         return input
 
-    def collate_gtboxes(self, data_dict: dict = None, config: EasyDict = None):
+    def collate_gtboxes(self, data_dict: Optional[dict] = None, config: Optional[EasyDict] = None):
         if data_dict is None:
             return partial(self.collate_gtboxes, config=config)
 
@@ -103,7 +103,7 @@ class physical_adversary:
 
         return data_dict
 
-    def physical_adversary(self, data_dict: dict = None, config: EasyDict = None):
+    def physical_adversary(self, data_dict: Optional[dict] = None, config: Optional[EasyDict] = None):
         if data_dict is None:
             return partial(self.physical_adversary, config=config)
 
@@ -113,15 +113,15 @@ class physical_adversary:
             data_dict["points"] = self.check_tensor(data_dict["points"])
             if data_dict["gt_boxes"].size(1) == 8:
                 pos, lwh, theta, label = torch.split(
-                    data_dict["gt_boxes"].clone(), (3, 3, 1, 1), dim=1
+                    data_dict["gt_boxes"].clone(), [3, 3, 1, 1], dim=1
                 )
             elif data_dict["gt_boxes"].size(1) == 10:  # includes velocity
                 pos, lwh, theta, vel, label = torch.split(
-                    data_dict["gt_boxes"].clone(), (3, 3, 1, 2, 1), dim=1
+                    data_dict["gt_boxes"].clone(), [3, 3, 1, 2, 1], dim=1
                 )
             else:
                 raise NotImplementedError
-            pos[:, 2] += lwh[:, 2] / 2.0
+            pos[:, 2] += lwh[:, 2] / 2.0 # move coordinate to the rooftop
             data_dict["points"] = self.attach_adv_patch_scene_car_aux(
                 data_dict["points"],
                 self.adversarial_patch,
@@ -132,6 +132,70 @@ class physical_adversary:
 
         return data_dict
 
+    # def fast_intensity(points,
+    #                lidar_origin:torch.Tensor,
+    #                alpha=1e-4,
+    #                gain=1.0,
+    #                sigma=0.02):
+    #     r = np.linalg.norm(points - lidar_origin, axis=1)
+
+    #     I = gain * np.exp(-alpha * (r ** 2))
+
+    #     I += np.random.normal(0, sigma, size=I.shape)
+
+    #     I = torch.clip(I, 0.0, 1.0)
+    #     return I
+
+    # @staticmethod
+    # @torch.no_grad
+    # def fast_intensity_torch(
+    #     points: torch.Tensor,
+    #     lidar_origin: Optional[torch.Tensor] = None,
+    #     alpha: float = 1e-4,
+    #     gain: float = 1.0,
+    #     sigma: float = 0.02,
+    # ) -> torch.Tensor:
+    #     """
+    #     Fast approximate LiDAR intensity (0~1)
+
+    #     Parameters
+    #     ----------
+    #     points : Tensor [N,3]
+    #         Point cloud coordinates
+    #     lidar_origin : Tensor [3], optional
+    #         LiDAR origin, default is [0,0,0]
+    #     alpha : float
+    #         Distance decay coefficient (default 1e-4)
+    #     gain : float
+    #         Intensity gain (default 1.0)
+    #     sigma : float
+    #         Gaussian noise standard deviation (default 0.02)
+
+    #     Returns
+    #     -------
+    #     intensity : Tensor [N]
+    #         Intensity values in range [0,1]
+    #     """
+
+    #     if lidar_origin is None:
+    #         lidar_origin = torch.zeros(3, device=points.device, dtype=points.dtype)
+
+    #     # compute distance from LiDAR origin
+    #     vecs = points - lidar_origin
+    #     r = torch.norm(vecs, dim=1)
+
+    #     # distance decay
+    #     intensity = gain * torch.exp(-alpha * r**2)
+
+    #     # add Gaussian noise
+    #     noise = torch.randn_like(intensity) * sigma
+    #     intensity = intensity + noise
+
+    #     # clamp intensity to [0,1]
+    #     intensity = torch.clamp(intensity, 0.0, 1.0)
+
+    #     return intensity
+
     def attach_adv_patch_scene_car_aux(
         self,
         points: torch.Tensor,
@@ -139,14 +203,12 @@ class physical_adversary:
         pos: torch.Tensor,  # [N, 3]
         theta: torch.Tensor,  # [N, 1]
         sample_amount=50,  # when lidar is None
-        adversarial_parameters=None,
+        adversarial_parameters: Optional[Dict[str, torch.Tensor]] =None,
     ):
         pts_set = [points]
         meshes_batch = []
         n = pos.size(0)
         for i in range(n):
-            extend_pts = None
-
             transformed_mesh = adv_patch.get_transformed_meshes(
                 pos[i : i + 1], theta[i], adversarial_parameters
             )
@@ -156,15 +218,27 @@ class physical_adversary:
             meshes_batch = join_meshes_as_batch(meshes_batch)
 
             if self.lidar is not None:
-                extend_pts = self.lidar.scan_triangles(meshes_batch)
+                extend_pts = self.lidar.scan_triangles(
+                    meshes_batch, compute_intensity=True
+                )
             else:
                 extend_pts = sample_points_from_meshes(meshes_batch, sample_amount * n)
 
                 # extend_pts = F.pad(extend_pts,  (0, 1), "constant", 1.0)
-            random_reflectness = torch.rand(extend_pts.shape[0], 1).to(
-                extend_pts.device
-            )  # (N, 1)
-            extend_pts = torch.cat([extend_pts, random_reflectness], dim=1)
+            # reflectness = torch.ones(extend_pts.shape[0], 1).to(
+            #     extend_pts.device
+            # )  # (N, 1)
+            # reflectness = torch.rand(extend_pts.shape[0], 1).to(
+            #     extend_pts.device
+            # )  # (N, 1)
+
+            if points.size(1) == 3:  # no intensity
+                # reflectivity : [0, 1]
+                reflectness = torch.rand(extend_pts.shape[0], 1).to(
+                    extend_pts.device
+                )  # (N, 1)
+                extend_pts = torch.cat([extend_pts, reflectness], dim=1)
+                # print(points[:, 3].mean())
 
             if points.size(1) == 5:  # include timestamp
                 timestamp = points[0, 4]

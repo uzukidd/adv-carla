@@ -104,7 +104,7 @@ class nuscenes_dataset(dataset_evaluation):
         return new_res_str, new_res_dict
 
 
-__all__: dict[dataset_evaluation] = {
+__all__: Dict[str, dataset_evaluation] = {
     "KittiDataset": kitti_dataset,
     "NuScenesDataset": nuscenes_dataset,
 }

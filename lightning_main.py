@@ -8,6 +8,7 @@ import os
 from typing import Callable, Iterable, List, Optional
 
 import lightning as L
+import numpy as np
 import torch
 from lightning.pytorch.cli import LightningCLI
 from pcdet.utils import common_utils
@@ -21,6 +22,7 @@ from attack_utils import encode_adversarial_target, physical_adversary, single_s
 from data_utils import resgister_data_processor
 from lightning_module import convert_to_easydict, pcdet_dataset, pcdet_model
 from loss_utils import relevant_bounding_box_loss
+from visual_utils import visualize_utils
 
 os.environ["WANDB_DISABLE_GPU"] = "true"
 os.environ["WANDB_DISABLE_CODE"] = "true"
@@ -50,6 +52,8 @@ class physical_attack(L.LightningModule):
     def __init__(
         self,
         pcdet_model_config,
+        save_scene_every_n_batches: int,
+        regularization_weight: float,
         adversary_config: Optional[dict] = None,
         optimizer: optimizer_callable = torch.optim.Adam,
         target_encoder: target_encoder_callable = encode_adversarial_target,
@@ -73,10 +77,13 @@ class physical_attack(L.LightningModule):
         self.datamodule: pcdet_dataset = None
         self.optimizer = optimizer
         self.target_encoder = target_encoder
+        self.regularization_weight = regularization_weight
 
         self.benchmark = None
         self.adversarial_patch = None
         self.adversary = None
+
+        self.save_scene_every_n_batches = save_scene_every_n_batches
 
         # Load adversary configuration and register pre-processing modules
         if adversary_config is not None:
@@ -107,8 +114,11 @@ class physical_attack(L.LightningModule):
         self.configure_experiment_name()
         return super().configure_callbacks()
 
+    # def on_after_backward(self):
+    #     import pdb;pdb.set_trace()
+
     def configure_model(self):
-        
+
         # Initialize logger
         if self.local_rank == 0:
             self.print_logger = common_utils.create_logger(
@@ -136,10 +146,13 @@ class physical_attack(L.LightningModule):
                 self.adversarial_patch,
                 LiDAR_base(
                     origin=torch.tensor([0.0, 0.0, 0.0]).to(self.device),
-                    azi_range=[-90, 90],
-                    polar_range=[-2.18, 2.0],
-                    polar_num=10,
-                    azi_res=0.08,
+                    azi_range=[0, 360],
+                    polar_range=[
+                        -24.8,
+                        2.0,
+                    ],
+                    polar_num=64,
+                    azi_res=0.1396,
                 ),
             )
 
@@ -185,6 +198,10 @@ class physical_attack(L.LightningModule):
         return super().on_save_checkpoint(checkpoint)
 
     def iterate_evaluation(self, batch_dict, batch_idx):
+        if batch_idx % self.save_scene_every_n_batches == 0:
+            self.save_scene_point_cloud(
+                batch_dict["points"], f"val-{batch_idx:04d}.bin", batch_dict["gt_boxes"]
+            )
         pred_dicts, ret_dict = self.pcdet_model(batch_dict)
         annos = self.datamodule.dataset.generate_prediction_dicts(
             batch_dict, pred_dicts, self.datamodule.class_names, output_path=None
@@ -228,12 +245,14 @@ class physical_attack(L.LightningModule):
             )
             self.logger.log_text("log_text", ["content"], [[result_str]])
 
+            attack_metrics = None
             if self.adversary is not None and self.adversary.benchmark is not None:
                 asr_str, asr_dict = self.adversary.evaluate_adversary(
                     result_dict,
                     self.datamodule.pcdet_dataset_config.DATASET,
                     self.get_logging_dir(),
                 )
+                attack_metrics = asr_dict
                 with open(
                     os.path.join(
                         self.get_logging_dir(),
@@ -247,11 +266,33 @@ class physical_attack(L.LightningModule):
                 # wandb.run.summary.update(asr_dict)
             # dict_keys(['Car_aos/easy_R40', 'Car_aos/moderate_R40', 'Car_aos/hard_R40', 'Car_3d/easy_R40', 'Car_3d/moderate_R40', 'Car_3d/hard_R40', 'Car_bev/easy_R40', 'Car_bev/moderate_R40', 'Car_bev/hard_R40', 'Car_image/easy_R40', 'Car_image/moderate_R40', 'Car_image/hard_R40', 'Pedestrian_aos/easy_R40', 'Pedestrian_aos/moderate_R40', 'Pedestrian_aos/hard_R40', 'Pedestrian_3d/easy_R40', 'Pedestrian_3d/moderate_R40', 'Pedestrian_3d/hard_R40', 'Pedestrian_bev/easy_R40', 'Pedestrian_bev/moderate_R40', 'Pedestrian_bev/hard_R40', 'Pedestrian_image/easy_R40', 'Pedestrian_image/moderate_R40', 'Pedestrian_image/hard_R40', 'Cyclist_aos/easy_R40', 'Cyclist_aos/moderate_R40', 'Cyclist_aos/hard_R40', 'Cyclist_3d/easy_R40', 'Cyclist_3d/moderate_R40', 'Cyclist_3d/hard_R40', 'Cyclist_bev/easy_R40', 'Cyclist_bev/moderate_R40', 'Cyclist_bev/hard_R40', 'Cyclist_image/easy_R40', 'Cyclist_image/moderate_R40', 'Cyclist_image/hard_R40'])
 
+            self._print_validation_attack_rates(attack_metrics)
+
     """
     -----------------
     Training
     -----------------
     """
+
+    def _print_validation_attack_rates(self, attack_metrics: Optional[dict]):
+        metrics = {
+            "ASR/Car_image/moderate": None,
+            "ASR/Car_3d/moderate": None,
+            "ASR/Car_bev/moderate": None,
+            "ASR/Car_aos/moderate_R40": None,
+        }
+        if attack_metrics:
+            for key in metrics.keys():
+                metrics[key] = attack_metrics.get(key)
+
+        formatted = []
+        for key, value in metrics.items():
+            if value is None:
+                formatted.append(f"{key}: N/A")
+            else:
+                formatted.append(f"{key}: {value:.2f}%")
+        print("[Validation][Attack Success Rates] " + " | ".join(formatted))
+
     # def on_fit_start(self):
     #     self.trainer.save_checkpoint(os.path.join(self.trainer.log_dir, "checkpoint.ckpt"))
 
@@ -260,6 +301,9 @@ class physical_attack(L.LightningModule):
 
     def on_train_epoch_end(self):
         pass
+
+    def on_train_end(self):
+        self.save_adversarial_mesh_views(f"train_epoch_{self.current_epoch}")
 
     def training_step(self, batch_dict, batch_idx):
         # training_step defines the train loop.
@@ -270,18 +314,38 @@ class physical_attack(L.LightningModule):
         # 'batch_cls_preds', 'batch_box_preds', 'cls_preds_normalized'])
 
         # self.visualize_frame(batch_dict['points'].cpu(), batch_dict['gt_boxes'].cpu())
+
+        if (
+            self.save_scene_every_n_batches > 0
+            and batch_idx % self.save_scene_every_n_batches == 0
+        ):
+            self.save_scene_point_cloud(
+                batch_dict["points"],
+                f"train-{batch_idx:04d}.bin",
+                batch_dict["gt_boxes"],
+            )
+
         pred_dicts, ret_dict = self.pcdet_model(batch_dict)
 
-        total_loss = torch.tensor(1e-6, device=self.device, requires_grad=True)
-        
+        total_loss = batch_dict["points"].new_zeros(())
+
         target_dicts = self.target_encoder.encode_target(batch_dict, pred_dicts)
         for batch_mask in range(batch_dict["batch_size"]):
             rrbbox_loss = self.loss.forward(
-                target_dicts[batch_mask], batch_dict["gt_boxes"][batch_mask]
+                target_dicts[batch_mask],
+                batch_dict["gt_boxes"][batch_mask],
+                reduction="max",
             )
             total_loss = total_loss + rrbbox_loss
-        total_loss = total_loss / batch_dict["batch_size"]
+        total_loss = (
+            total_loss / batch_dict["batch_size"]
+            + self.regularization_weight
+            * self.adversarial_patch.get_regularization_loss()
+        )
 
+        values = {"running loss": total_loss}
+        self.log_dict(values, prog_bar=True)
+        # import pdb;pdb.set_trace()
         return total_loss
 
         # return batch_dict['points'].mean()
@@ -289,10 +353,44 @@ class physical_attack(L.LightningModule):
         # list[dict_keys(['pred_boxes', 'pred_scores', 'pred_labels'])]
         # dict_keys(['gt', 'roi_0.3', 'rcnn_0.3', 'roi_0.5', 'rcnn_0.5', 'roi_0.7', 'rcnn_0.7'])
 
+    def save_scene_point_cloud(
+        self, pc: torch.Tensor, name: str, gt_boxes: torch.Tensor = None
+    ):
+        if self.local_rank == 0:
+            scene_dir = os.path.join(self.get_logging_dir(), "scenes")
+            os.makedirs(scene_dir, exist_ok=True)
+
+            pc_file_path = os.path.join(scene_dir, name)
+            pc.detach().cpu().numpy().astype(np.float32).tofile(pc_file_path)
+
+            if gt_boxes is not None:
+                gt_boxes_bin_name = f"{name}.gt_boxes.bin"
+                gt_boxes_bin_path = os.path.join(scene_dir, gt_boxes_bin_name)
+                # print(gt_boxes.size())
+                gt_boxes.detach().cpu().numpy().astype(np.float32).tofile(
+                    gt_boxes_bin_path
+                )
+
+    def save_adversarial_mesh_views(self, file_prefix: str):
+        if self.local_rank != 0 or self.adversarial_patch is None:
+            return
+
+        logging_dir = self.get_logging_dir() or getattr(self.trainer, "log_dir", None)
+        if logging_dir is None:
+            return
+
+        output_dir = os.path.join(logging_dir, "adversarial_mesh_views")
+        visualize_utils.save_adversarial_mesh_views(
+            self.adversarial_patch,
+            output_dir=output_dir,
+            file_prefix=file_prefix,
+        )
+
     def configure_gradient_clipping(
         self, optimizer, gradient_clip_val, gradient_clip_algorithm
     ):
-        self.adversarial_patch.constrain_grad()
+        if self.adversarial_patch is not None:
+            self.adversarial_patch.constrain_grad()
         self.clip_gradients(
             optimizer,
             gradient_clip_val=gradient_clip_val,
@@ -315,6 +413,7 @@ class physical_attack(L.LightningModule):
 
     def on_validation_epoch_end(self):
         self.evaluate_pred_result()
+        self.save_adversarial_mesh_views(f"val_epoch_{self.current_epoch}")
         # if self.local_rank == 0:
         #     import pdb; pdb.set_trace()
 
@@ -333,6 +432,7 @@ class physical_attack(L.LightningModule):
 
     def on_test_epoch_end(self):
         self.evaluate_pred_result()
+        self.save_adversarial_mesh_views(f"test_epoch_{self.current_epoch}")
 
     def configure_optimizers(self):
         optimizer = self.optimizer(self.parameters())

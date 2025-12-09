@@ -8,11 +8,12 @@ fit:
 
     devices: 1
   data:
-    disabled_processing: ['constant_reflectness']
+    # disabled_processing: ['constant_reflectness']
     class_names: ['Car', 'Pedestrian', 'Cyclist']
-    batch_size: 8
+    batch_size: 1
     workers: 63
   model:
+    save_scene_every_n_batches: 100
     adversary_config: null
    
 
@@ -26,9 +27,10 @@ test:
         log_model: true
     devices: 1
   data:
-    disabled_processing: ['constant_reflectness']
+    # disabled_processing: ['constant_reflectness']
     class_names: ['Car', 'Pedestrian', 'Cyclist']
-    batch_size: 8
+    batch_size: 1
     workers: 63
   model:
+    save_scene_every_n_batches: 100
     adversary_config: null

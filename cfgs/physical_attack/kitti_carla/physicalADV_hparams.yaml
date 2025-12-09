@@ -10,13 +10,15 @@ fit:
   data:
     disabled_processing: ['constant_reflectness']
     class_names: ['Car', 'Pedestrian', 'Cyclist']
-    batch_size: 8
+    batch_size: 1
     workers: 63
   model:
+    save_scene_every_n_batches: -1
+    regularization_weight: 1e-3
     optimizer: 
       class_path: torch.optim.Adam
       init_args:
-        lr: 1e-3
+        lr: 5e-3
     
 test:
   seed_everything: 42
@@ -26,9 +28,12 @@ test:
         init_args:
           project: "physical-attack"
           log_model: "all"
-    devices: 4
+    devices: 1
   data:
     disabled_processing: ['constant_reflectness']
     class_names: ['Car', 'Pedestrian', 'Cyclist']
-    batch_size: 8
+    batch_size: 1
     workers: 63
+  model:
+    save_scene_every_n_batches: -1
+    regularization_weight: 1e-3

@@ -8,6 +8,7 @@ from typing import Callable, Optional
 
 
 from pcdet.ops.iou3d_nms import iou3d_nms_utils
+from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d
 # from cudaext.ops.Rotated_IoU.oriented_iou_loss import cal_iou_3d
 # from cudaext.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
 
@@ -19,7 +20,7 @@ class relevant_bounding_box_loss(nn.Module):
         self.iou_threshold = 0.1
         self.score_threshold = 0.1
 
-    def forward(self, data_dict:dict, gt_boxes:torch.Tensor, normalize:str=None):
+    def forward(self, data_dict:dict, gt_boxes:torch.Tensor, reduction:str="sum"):
         preds_scores:torch.Tensor = data_dict["pred_scores"]    # [N, ]
         preds_boxes:torch.Tensor = data_dict["pred_boxes"]      # [N, 7] or [N, 9]
         pred_labels:torch.Tensor = data_dict["pred_labels"]     # [N, ]
@@ -40,7 +41,7 @@ class relevant_bounding_box_loss(nn.Module):
         gt_boxes = gt_boxes[gt_labels[:, 0] == self.target]
         gt_labels = gt_labels[gt_labels[:, 0] == self.target]
 
-        if gt_boxes.size(0) != 0 and preds_boxes.size(0) != 0:
+        if gt_boxes.numel() != 0 and preds_boxes.numel() != 0:
             iou3d_matrix:torch.Tensor = iou3d_nms_utils.boxes_iou3d_gpu(preds_boxes, gt_boxes).detach() # [M, N]
             relevant_iou3d, relevant_idx = iou3d_matrix.max(dim = 1) # [M, ]
             relevant_iou3d_mask = (relevant_iou3d >= self.iou_threshold)
@@ -49,9 +50,18 @@ class relevant_bounding_box_loss(nn.Module):
             masked_relevant_idx = relevant_idx[relevant_iou3d_mask]
             masked_preds_scores = preds_scores[relevant_iou3d_mask]
 
-            adv_loss = (-masked_relevant_iou3d * torch.log(1.0 - masked_preds_scores)).sum()
+            adv_loss = (-masked_relevant_iou3d * torch.log(torch.clamp(1.0 - masked_preds_scores, min=1e-6)))
+            if adv_loss.numel() != 0:
+                if reduction == "sum":
+                    adv_loss = adv_loss.sum()
+                elif reduction == "mean":
+                    adv_loss = adv_loss.mean()
+                elif reduction == "max":
+                    adv_loss = adv_loss.max()
+                else:
+                    raise NotImplementedError
 
-            return adv_loss
+                return adv_loss
 
         return torch.tensor(1e-6, device=preds_scores.device, requires_grad=True)
 

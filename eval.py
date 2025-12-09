@@ -188,7 +188,7 @@ def main():
                    azi_range=[-90, 90],
                    polar_range= [-2.18, 2.0],
                    polar_num=10, 
-                   azi_res=0.08,)
+                   azi_res=0.144,)
     kitti_adv_dataset = adv_dataset(dataset,
                                     attack_cfg,
                                     surrogate_model=model,

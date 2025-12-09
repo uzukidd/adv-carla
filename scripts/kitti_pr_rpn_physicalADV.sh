@@ -13,4 +13,4 @@ fi
 python lightning_main.py \
     --config="cfgs/physical_attack/${DATASET}/${CONFIG_HPARAMS}" \
     fit \
-    --config="cfgs/physical_attack/${DATASET}/physicalADV_pr.yaml"
+    --config="cfgs/physical_attack/${DATASET}/physicalADV_pr_rpn.yaml"
